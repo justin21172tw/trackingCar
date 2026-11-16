@@ -3,6 +3,7 @@
 #include "MotorController.h"
 #include "UltrasonicSensor.h"
 #include "MotorTest.h"
+#include "UltrasonicTest.h"
 
 /**
  * ==============================================================================
@@ -10,10 +11,12 @@
  * ==============================================================================
  * 
  * 【測試模式切換開關】：
- * - 設為 1：專用「馬達獨立自檢測試模式」(不依賴超音波，循環驗證馬達動作與方向)。
- * - 設為 0：正式「超音波跟隨模式」(結合超音波測距自動控制馬達)。
+ * - TEST_MOTOR_ONLY 設為 1：專用「馬達獨立自檢測試模式」(不依賴超音波，循環驗證馬達動作與方向)。
+ * - TEST_ULTRASONIC_ONLY 設為 1：專用「單一超音波獨立測試模式」(不啟動馬達，專注檢驗測距穩定性與濾波表現)。
+ * - 兩者皆為 0：正式「超音波跟隨模式」(結合超音波測距自動控制馬達)。
  */
-#define TEST_MOTOR_ONLY 0
+#define TEST_MOTOR_ONLY      0
+#define TEST_ULTRASONIC_ONLY 0
 
 // 實例化模組一：馬達控制器 (4接口：A1A, A1B, B1A, B1B，腳位取自 Config.h)
 MotorController motor(
@@ -33,7 +36,7 @@ UltrasonicSensor frontSensor(
     Config::UltrasonicParams::MIN_DISTANCE_CM
 );
 
-// 非同步定時器變數 (供超音波模式使用)
+// 非同步定時器變數 (供超音波跟隨模式使用)
 unsigned long lastMeasureTime = 0;
 const unsigned long MEASURE_INTERVAL_MS = 80;
 
@@ -59,8 +62,13 @@ void setup() {
 #if TEST_MOTOR_ONLY
     // 顯示馬達測試啟動提示與安全倒數
     MotorTest::printStartupPrompt();
+#elif TEST_ULTRASONIC_ONLY
+    // 初始化超音波模組並進入超音波測試提示
+    frontSensor.init();
+    Serial.println("[Setup] Ultrasonic Sensor initialized.");
+    UltrasonicTest::printStartupPrompt(frontSensor);
 #else
-    // 3. 初始化超音波模組
+    // 3. 初始化超音波模組進入正式跟隨模式
     frontSensor.init();
     Serial.println("[Setup] Ultrasonic Sensor initialized.");
     Serial.println("[Setup] System ready! Entering main loop...\n");
@@ -69,8 +77,11 @@ void setup() {
 
 void loop() {
 #if TEST_MOTOR_ONLY
-    // 執行馬達診斷循環 (邏輯已封裝至 MotorTest 模組)
+    // 執行馬達診斷循環 (邏輯封裝於 MotorTest 模組)
     MotorTest::runDiagnostic(motor);
+#elif TEST_ULTRASONIC_ONLY
+    // 執行單一超音波診斷循環 (邏輯封裝於 UltrasonicTest 模組)
+    UltrasonicTest::runDiagnostic(frontSensor);
 #else
     // 超音波跟隨主邏輯
     unsigned long currentMillis = millis();
