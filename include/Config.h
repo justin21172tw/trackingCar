@@ -56,7 +56,62 @@ namespace Config {
     };
 
     // ==========================================
-    // 3. 追蹤與安全防撞距離設定 (後續演算法使用)
+    // 3. 多路超音波陣列設定 (CD74HC4067 複用器 + MCP23017 I2C 擴充)
+    // ==========================================
+    struct UltrasonicArrayPins {
+        static constexpr uint8_t SENSOR_COUNT = 10;
+
+        // MCP23017 I2C 設定
+        static constexpr uint8_t MCP_I2C_ADDR   = 0x20;   // 預設 I2C 位址 (A0=A1=A2=GND)
+        static constexpr int8_t  I2C_SDA_PIN    = 21;     // ESP32 SDA 腳位
+        static constexpr int8_t  I2C_SCL_PIN    = 4;      // ESP32 SCL 腳位 (避開與 Motor B1A: GPIO 22 衝突)
+        static constexpr uint32_t I2C_CLOCK     = 400000; // 400kHz Fast Mode
+
+        // CD74HC4067 多路複用器 (MUX) 控制模式
+        // true: 由 MCP23017 腳位控制 S0~S3 (節省 ESP32 腳位，僅需 I2C+Echo 共 3 腳)
+        // false: 由 ESP32 GPIO 直接控制 S0~S3 (極速切換)
+        static constexpr bool MUX_CONTROL_VIA_MCP = true;
+
+        // 當 MUX_CONTROL_VIA_MCP == false (由 ESP32 GPIO 直控 S0~S3)
+        static constexpr int8_t ESP32_MUX_S0 = 13;
+        static constexpr int8_t ESP32_MUX_S1 = 14;
+        static constexpr int8_t ESP32_MUX_S2 = 27;
+        static constexpr int8_t ESP32_MUX_S3 = 26;
+        static constexpr int8_t ESP32_MUX_EN = -1; // -1 表示實體接 GND 常時使能
+
+        // 當 MUX_CONTROL_VIA_MCP == true (由 MCP23017 控制 S0~S3: GPB4~GPB7 為 Pin 12~15)
+        static constexpr uint8_t MCP_MUX_S0  = 12; // GPB4
+        static constexpr uint8_t MCP_MUX_S1  = 13; // GPB5
+        static constexpr uint8_t MCP_MUX_S2  = 14; // GPB6
+        static constexpr uint8_t MCP_MUX_S3  = 15; // GPB7
+        static constexpr int8_t  MCP_MUX_EN  = -1; // -1 表示實體接 GND
+
+        // CD74HC4067 SIG (COM) 總回波線接至 ESP32 (建議使用僅輸入腳位 GPIO 34, 35, 36, 39)
+        static constexpr uint8_t ESP32_ECHO_PIN = 34;
+
+        // 10 顆超音波 Trig 對應之 MCP23017 腳位 (GPA0~GPA7 為 0~7, GPB0~GPB1 為 8~9)
+        static constexpr uint8_t TRIG_MCP_PINS[SENSOR_COUNT] = {
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9
+        };
+
+        // 10 顆超音波 Echo 對應之 CD74HC4067 頻道 (0 ~ 9)
+        static constexpr uint8_t ECHO_MUX_CHANNELS[SENSOR_COUNT] = {
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9
+        };
+
+        // 10 顆超音波方位角 (度，車頭正中央為 0°，負值偏左，正值偏右，扇形排列)
+        static constexpr float SENSOR_ANGLES[SENSOR_COUNT] = {
+            -75.0f, -55.0f, -38.0f, -22.0f, -7.0f,
+              7.0f,  22.0f,  38.0f,  55.0f, 75.0f
+        };
+
+        // 陣列測距範圍參數
+        static constexpr float MIN_DISTANCE_CM = 2.0f;
+        static constexpr float MAX_DISTANCE_CM = 250.0f;
+    };
+
+    // ==========================================
+    // 4. 追蹤與安全防撞距離設定 (後續演算法使用)
     // ==========================================
     struct TrackingParams {
         static constexpr float STOP_DISTANCE_CM     = 15.0f; // 緊急煞車距離 (低於此距離停止或後退)

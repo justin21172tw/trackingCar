@@ -13,20 +13,28 @@ trackingCar/
 ├── platformio.ini              # PlatformIO 專案設定檔 (Arduino Framework)
 ├── README.md                   # 專案說明與硬體接線手冊
 ├── include/
-│   ├── Config.h                # 系統全域設定 (腳位、物理參數、閥值)
+│   ├── Config.h                # 系統全域設定 (腳位、物理參數、多路超音波映射)
+│   ├── MCP23017.h              # [基礎] MCP23017 I2C 16-Bit I/O 擴充晶片驅動
 │   ├── MotorController.h       # [模組一] 馬達驅動與差速控制標頭檔
-│   └── UltrasonicSensor.h      # [模組二] 單一超音波測距標頭檔
+│   ├── MotorTest.h             # [測試] 馬達自檢診斷
+│   ├── UltrasonicSensor.h      # [模組二] 單一超音波測距標頭檔
+│   ├── UltrasonicTest.h        # [測試] 單一超音波自檢診斷
+│   ├── UltrasonicArray.h       # [模組三] 10路超音波陣列抽象化標頭檔 (CD74HC4067 + MCP23017)
+│   └── UltrasonicArrayTest.h   # [測試] 10路超音波陣列自檢與診斷
 └── src/
+    ├── MCP23017.cpp            # MCP23017 I2C 實作
     ├── MotorController.cpp     # [模組一] 馬達驅動控制實作
     ├── UltrasonicSensor.cpp    # [模組二] 單一超音波測距實作
-    └── main.cpp                # 測試與驗證主程式 (目前為前兩模組之整合示範)
+    ├── UltrasonicArray.cpp     # [模組三] 10路超音波陣列測距抽象實作
+    └── main.cpp                # 測試與驗證主程式
 ```
 
 | 模組編號 | 模組名稱 | 目前進度 | 功能描述 |
 | :--- | :--- | :---: | :--- |
 | **模組一** | **馬達操作邏輯 (MotorController)** | **完成** | 雙輪差速驅動、正反轉、差速轉向、原地旋轉、煞車制動、左右輪修偏校準。支援 2-Pin / 3-Pin 驅動晶片。 |
 | **模組二** | **單一超音波測距 (UltrasonicSensor)** | **完成** | 封裝 Trig/Echo 觸發測量、防卡死超時保護 (Timeout)、中位數突波濾波、方位角設定與量測快取。 |
-| **模組三** | **十個超音波輪詢與尋標追蹤** | *待開發* | 擴充板多感測器依序詢問、目標角度解算 (向量合成/加權平均)、PID 跟隨閉迴路控制。 |
+| **模組三** | **十路超音波測距抽象化 (UltrasonicArray)** | **完成** | 結合 CD74HC4067 (Echo MUX) 與 MCP23017 (Trig Expander)，抽象化「指定特定編號超音波進行一次測距」的底層時序與多工邏輯，支援任意非線性/動態輪詢。 |
+| **模組四** | **動態追蹤與 PID 閉迴路控制** | *待開發* | 依據最後偵測目標感測器展開動態局部輪詢、目標角度向量解算、雙輪差速 PID 跟隨控制。 |
 
 ---
 
@@ -100,6 +108,48 @@ bool isValid() const;
 uint8_t getId() const;
 float getAngleOffset() const;
 ```
+
+---
+
+## 模組三：十路超音波測距抽象化 (`UltrasonicArray`)
+
+### 晶片分工與硬體架構
+- **CD74HC4067 (16:1 類比多路複用器)**：負責切換 10 顆超音波的 **Echo** 訊號。
+  - 原因：超音波測距依賴微秒級 (us) 的 `pulseIn()` 硬體計時。I2C 匯流排無法提供微秒級的實時訊號採樣；透過 CD74HC4067 類比開關，Echo 訊號直接以奈秒級延遲透傳至 ESP32 的單一硬體 GPIO（如 GPIO 34），兼具超高精確度與省腳位優點。
+- **MCP23017 (16-Bit I2C I/O 擴充晶片)**：負責發射 10 顆超音波的 **Trig** 脈衝。
+  - 10 個 Trig 腳位分別接在 MCP23017 的 GPA0~GPA7 (Pin 0~7) 與 GPB0~GPB1 (Pin 8~9)。
+  - CD74HC4067 的 S0~S3 頻道選擇腳位亦可直接接在 MCP23017 的 GPB4~GPB7 (Pin 12~15)，使整個 10 路超音波陣列**僅耗用 ESP32 3 根腳位**（SDA、SCL、Echo）！亦支援設定為 ESP32 GPIO 直控 S0~S3。
+
+### 核心抽象 API (`measureDistance`)
+本模組徹底抽象化「指定特定編號超音波進行一次測距」的底層時序與多工邏輯，**不強迫從 0~9 依序輪詢**，主程式可依據跟隨演算法自由決定呼叫順序：
+```cpp
+// 1. 初始化 (配置 I2C、MCP23017 與多工器頻道)
+bool init();
+
+// 2.【核心方法】指定特定超音波進行一次測距 (公分，超時或無回波返回 -1.0f)
+float measureDistance(uint8_t sensorIndex);
+
+// 3. 指定特定超音波進行多次採樣中位數濾波 (消除偶發環境突波)
+float measureMedian(uint8_t sensorIndex, uint8_t samples = 3, uint8_t delayMs = 12);
+
+// 4. 讀取快取值與感測器屬性
+float getLastDistance(uint8_t sensorIndex) const;
+uint32_t getLastMeasureTime(uint8_t sensorIndex) const;
+bool isValid(uint8_t sensorIndex) const;
+float getSensorAngle(uint8_t sensorIndex) const;
+uint8_t getSensorCount() const;
+```
+
+### 硬體接線對應表 (`Config.h` -> `UltrasonicArrayPins`)
+| 模組接口 | 晶片腳位 / 頻道 | ESP32 連接 | 備註 |
+| :--- | :--- | :--- | :--- |
+| **I2C SDA** | MCP23017 Pin 13 (SDA) | **GPIO 21** | 具備 4.7kΩ 上拉電阻 |
+| **I2C SCL** | MCP23017 Pin 12 (SCL) | **GPIO 4** | 避開 Motor B1A (GPIO 22) 衝突 |
+| **Echo 總線** | CD74HC4067 SIG (COM) | **GPIO 34** | 僅輸入腳位，安全抗干擾 |
+| **MUX S0~S3** | CD74HC4067 S0~S3 | **MCP23017 GPB4~GPB7** | (亦可切換為 ESP32 直控模式) |
+| **Trig 0 ~ 7**| Sensor 0~7 Trig | **MCP23017 GPA0~GPA7** | 觸發脈衝輸出 |
+| **Trig 8 ~ 9**| Sensor 8~9 Trig | **MCP23017 GPB0~GPB1** | 觸發脈衝輸出 |
+| **Echo 0 ~ 9**| Sensor 0~9 Echo | **CD74HC4067 C0~C9** | 類比開關導通至 SIG |
 
 ---
 
