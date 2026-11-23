@@ -146,10 +146,10 @@ void UltrasonicArray::triggerSensor(uint8_t sensorIndex) {
     _mcp.digitalWrite(mcpPin, LOW);
 }
 
-float UltrasonicArray::measureDistance(uint8_t sensorIndex) {
+unsigned long UltrasonicArray::measureEchoDurationUs(uint8_t sensorIndex) {
     // 1. 合法性檢查
     if (sensorIndex >= _config.sensorCount) {
-        return -1.0f;
+        return 0;
     }
 
     // 2. 防餘波干擾保護 (確保與前一次發射間隔充足時間)
@@ -170,9 +170,19 @@ float UltrasonicArray::measureDistance(uint8_t sensorIndex) {
     _lastPingTimestamp = millis();
 
     // 5. 透過 ESP32 硬體計時 pulseIn 擷取 Echo 高電位持續微秒數
-    unsigned long duration = pulseIn(_config.esp32EchoPin, HIGH, _timeoutUs);
+    return pulseIn(_config.esp32EchoPin, HIGH, _timeoutUs);
+}
 
-    // 6. 判斷回波有效性並換算距離
+float UltrasonicArray::measureDistance(uint8_t sensorIndex) {
+    // 1. 合法性檢查
+    if (sensorIndex >= _config.sensorCount) {
+        return -1.0f;
+    }
+
+    // 2. 擷取原始脈衝寬度
+    unsigned long duration = measureEchoDurationUs(sensorIndex);
+
+    // 3. 判斷回波有效性並換算距離
     if (duration == 0) {
         // 超時無反射回波
         _lastDistances[sensorIndex] = -1.0f;

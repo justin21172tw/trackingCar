@@ -6,6 +6,7 @@
 #include "MotorTest.h"
 #include "UltrasonicTest.h"
 #include "UltrasonicArrayTest.h"
+#include "UltrasonicHarnessTest.h"
 
 /**
  * ==============================================================================
@@ -13,14 +14,16 @@
  * ==============================================================================
  * 
  * 【測試模式切換開關】：
- * - TEST_MOTOR_ONLY 設為 1：專用「馬達獨立自檢測試模式」(不依賴超音波，循環驗證馬達動作與方向)。
- * - TEST_ULTRASONIC_ONLY 設為 1：專用「單一超音波獨立測試模式」(不啟動馬達，專注檢驗測距穩定性與濾波表現)。
- * - TEST_ULTRASONIC_ARRAY 設為 1：專用「多路超音波陣列測試模式」(CD74HC4067 + MCP23017，測試指定超音波測距)。
+ * - TEST_MOTOR_ONLY         設為 1：專用「馬達獨立自檢測試模式」(不依賴超音波，循環驗證馬達動作與方向)。
+ * - TEST_ULTRASONIC_ONLY    設為 1：專用「單一超音波獨立測試模式」(ESP32 直控腳位，不啟動馬達)。
+ * - TEST_ULTRASONIC_ARRAY   設為 1：專用「多路超音波陣列測試模式」(輪詢 8 顆超音波)。
+ * - TEST_ULTRASONIC_HARNESS 設為 1：專用「總成線路單顆超音波測試模式」(通過 MCP23017+CD74HC4067 驗證線束與插槽)。
  * - 上述皆為 0：正式「超音波跟隨模式」(結合超音波測距自動控制馬達)。
  */
-#define TEST_MOTOR_ONLY        0
-#define TEST_ULTRASONIC_ONLY   0
-#define TEST_ULTRASONIC_ARRAY  1
+#define TEST_MOTOR_ONLY          0
+#define TEST_ULTRASONIC_ONLY     0
+#define TEST_ULTRASONIC_ARRAY    0
+#define TEST_ULTRASONIC_HARNESS  1
 
 // 實例化模組一：馬達控制器 (4接口：A1A, A1B, B1A, B1B，腳位取自 Config.h)
 MotorController motor(
@@ -82,6 +85,14 @@ void setup() {
         Serial.println("[Setup] Ultrasonic Array initialized successfully.");
         UltrasonicArrayTest::printStartupPrompt(ultrasonicArray);
     }
+#elif TEST_ULTRASONIC_HARNESS
+    // 初始化總成線路擴充硬體 (CD74HC4067 + MCP23017)
+    if (!ultrasonicArray.init()) {
+        Serial.println("[ERROR] MCP23017 或 I2C 匯流排初始化失敗！請檢查 SDA/SCL 接線與位址。");
+    } else {
+        Serial.println("[Setup] 總成線路硬體初始化完成。");
+        UltrasonicHarnessTest::printStartupPrompt(ultrasonicArray);
+    }
 #else
     // 3. 初始化超音波模組進入正式跟隨模式
     frontSensor.init();
@@ -98,11 +109,14 @@ void loop() {
     // 執行單一超音波診斷循環 (邏輯封裝於 UltrasonicTest 模組)
     UltrasonicTest::runDiagnostic(frontSensor);
 #elif TEST_ULTRASONIC_ARRAY
-    // 示範呼叫抽象化模組：自訂順序指定特定超音波測距 (非死板 0~9，例如優先由車頭中央 4, 5 擴展至兩側)
-    static const uint8_t dynamicOrder[] = { 4, 5, 3, 6, 2, 7, 1, 8, 0, 9 };
+    // 自訂順序指定 8 顆超音波測距（索引範圍 0~7，優先由車頭中央擴展至兩側）
+    static const uint8_t dynamicOrder[] = { 4, 3, 5, 2, 6, 1, 7, 0 };
     static const uint8_t orderLen = sizeof(dynamicOrder) / sizeof(dynamicOrder[0]);
 
     UltrasonicArrayTest::runCustomSequenceDiagnostic(ultrasonicArray, dynamicOrder, orderLen, 200);
+#elif TEST_ULTRASONIC_HARNESS
+    // 執行總成線路單顆超音波診斷 (支援鎖定即時測距、Serial 切換插槽 0~7、自動尋標巡檢與檢驗清單)
+    UltrasonicHarnessTest::runDiagnostic(ultrasonicArray);
 #else
     // 超音波跟隨主邏輯
     unsigned long currentMillis = millis();

@@ -100,6 +100,14 @@ public:
     float measureDistance(uint8_t sensorIndex);
 
     /**
+     * @brief 指定特定超音波進行測距，並取得原始 Echo 脈衝寬度 (微秒)
+     * 用於線束與硬體除錯，可直接判斷是否有任何脈衝送回
+     * @param sensorIndex 感測器編號 (0 ~ sensorCount - 1)
+     * @return unsigned long 回波脈衝時間 (微秒，0 表示超時無回波)
+     */
+    unsigned long measureEchoDurationUs(uint8_t sensorIndex);
+
+    /**
      * @brief 指定特定超音波進行多次採樣中位數濾波測距 (過濾環境雜訊)
      * @param sensorIndex 感測器編號 (0 ~ sensorCount - 1)
      * @param samples 採樣次數 (建議 3 或 5)
@@ -144,6 +152,40 @@ public:
      * @brief 取得目前管理的感測器總數量
      */
     uint8_t getSensorCount() const { return _config.sensorCount; }
+
+    /**
+     * @brief 取得指定感測器之 Trig 腳位 (MCP23017 腳位 0~15)
+     */
+    uint8_t getTrigPin(uint8_t sensorIndex) const {
+        return (sensorIndex < _config.sensorCount && _config.trigPins != nullptr) ? _config.trigPins[sensorIndex] : 255;
+    }
+
+    /**
+     * @brief 取得指定感測器之 Echo 頻道 (CD74HC4067 頻道 0~15)
+     */
+    uint8_t getEchoChannel(uint8_t sensorIndex) const {
+        return (sensorIndex < _config.sensorCount && _config.echoChannels != nullptr) ? _config.echoChannels[sensorIndex] : 255;
+    }
+
+    /**
+     * @brief 取得 ESP32 Echo 輸入腳位
+     */
+    uint8_t getEchoPin() const { return _config.esp32EchoPin; }
+
+    /**
+     * @brief 取得當前設定之超時微秒數
+     */
+    uint32_t getTimeoutUs() const { return _timeoutUs; }
+
+    /**
+     * @brief 取得最小量測距離 (cm)
+     */
+    float getMinDistanceCm() const { return _config.minDistanceCm; }
+
+    /**
+     * @brief 取得最大量測距離 (cm)
+     */
+    float getMaxDistanceCm() const { return _config.maxDistanceCm; }
 
     /**
      * @brief 取得底層 MCP23017 實例引用 (供進階除錯或直接存取)
