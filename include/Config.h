@@ -59,7 +59,7 @@ namespace Config {
     // 3. 多路超音波陣列設定 (CD74HC4067 複用器 + MCP23017 I2C 擴充)
     // ==========================================
     struct UltrasonicArrayPins {
-        static constexpr uint8_t SENSOR_COUNT = 10;
+        static constexpr uint8_t SENSOR_COUNT = 8;
 
         // MCP23017 I2C 設定
         static constexpr uint8_t MCP_I2C_ADDR   = 0x20;   // 預設 I2C 位址 (A0=A1=A2=GND)
@@ -89,20 +89,20 @@ namespace Config {
         // CD74HC4067 SIG (COM) 總回波線接至 ESP32 (建議使用僅輸入腳位 GPIO 34, 35, 36, 39)
         static constexpr uint8_t ESP32_ECHO_PIN = 34;
 
-        // 10 顆超音波 Trig 對應之 MCP23017 腳位 (GPA0~GPA7 為 0~7, GPB0~GPB1 為 8~9)
+        // 8 顆超音波 Trig 對應之 MCP23017 腳位 (GPA0~GPA7 為 0~7)
         static constexpr uint8_t TRIG_MCP_PINS[SENSOR_COUNT] = {
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9
+            0, 1, 2, 3, 4, 5, 6, 7
         };
 
-        // 10 顆超音波 Echo 對應之 CD74HC4067 頻道 (0 ~ 9)
+        // 8 顆超音波 Echo 對應之 CD74HC4067 頻道 (0 ~ 7)
         static constexpr uint8_t ECHO_MUX_CHANNELS[SENSOR_COUNT] = {
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9
+            0, 1, 2, 3, 4, 5, 6, 7
         };
 
-        // 10 顆超音波方位角 (度，車頭正中央為 0°，負值偏左，正值偏右，扇形排列)
+        // 8 顆超音波方位角 (度，車頭正中央為 0°，負值偏左，正值偏右，扇形排列)
         static constexpr float SENSOR_ANGLES[SENSOR_COUNT] = {
-            -75.0f, -55.0f, -38.0f, -22.0f, -7.0f,
-              7.0f,  22.0f,  38.0f,  55.0f, 75.0f
+            -70.0f, -50.0f, -30.0f, -10.0f,
+             10.0f,  30.0f,  50.0f,  70.0f
         };
 
         // 陣列測距範圍參數
