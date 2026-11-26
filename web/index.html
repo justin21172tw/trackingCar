@@ -6,33 +6,52 @@
   <meta name="theme-color" content="#f7f9fc">
   <title>Tracking Car Telemetry</title>
   <link rel="stylesheet" href="styles.css">
-  <script src="app.js" defer></script>
+  <script src="app.js?v=serial-diagnostics" defer></script>
 </head>
 <body>
   <header class="page-header">
     <div>
       <p class="eyebrow">ESP32 / SENSOR DEBUGGER</p>
       <h1>Tracking car telemetry</h1>
-      <p class="intro">Live ultrasonic readings, mapped around the chassis.</p>
+      <p class="intro">Connect the vehicle over USB to view real ultrasonic readings.</p>
     </div>
     <div class="connection-controls">
       <span class="connection-state" id="connectionState" data-state="disconnected">
         <span class="state-dot" aria-hidden="true"></span>
-        <span id="connectionLabel">Not connected</span>
+        <span id="connectionLabel">No vehicle connected</span>
       </span>
       <button class="button button-primary" id="connectSerial" type="button">Connect USB</button>
       <button class="button button-primary" id="disconnectSerial" type="button" hidden>Disconnect USB</button>
-      <button class="button" id="startSimulation" type="button">Start simulation</button>
-      <button class="button button-quiet" id="stopSimulation" type="button" disabled>Stop</button>
     </div>
   </header>
 
   <main>
+    <p class="page-message" id="pageMessage" role="status" aria-live="polite">
+      No vehicle connected. Connect the ESP32 over USB; no readings are shown until real telemetry arrives.
+    </p>
+    <section class="serial-diagnostics" aria-label="USB receive diagnostics">
+      <div class="serial-diagnostics-heading">
+        <div>
+          <p class="eyebrow">USB DIAGNOSTICS</p>
+          <h2>Receive pipeline</h2>
+        </div>
+        <span id="serialReadState">Not connected</span>
+      </div>
+      <dl class="serial-diagnostics-grid">
+        <div><dt>Selected device</dt><dd id="serialDevice">—</dd></div>
+        <div><dt>Receive counters</dt><dd id="serialReceiveCount">0 bytes · 0 lines</dd></div>
+        <div><dt>Telemetry pipeline</dt><dd id="serialTelemetryCount">0 prefixed · 0 accepted · 0 rejected</dd></div>
+        <div class="serial-last-line"><dt>Last complete serial line</dt><dd id="serialLastLine">—</dd></div>
+      </dl>
+      <p class="serial-diagnostics-note">
+        Browser serial APIs do not expose the COM port number. The USB vendor/product IDs help identify the selected adapter.
+      </p>
+    </section>
     <section class="summary-grid" aria-label="Scan summary">
       <article class="summary-card">
         <span class="summary-label">Latest scan</span>
         <strong id="scanNumber">—</strong>
-        <span class="summary-caption" id="scanAge">Waiting for telemetry</span>
+        <span class="summary-caption" id="scanAge">No vehicle data</span>
       </article>
       <article class="summary-card">
         <span class="summary-label">Valid sensors</span>
@@ -109,12 +128,12 @@
           <strong id="selectedDistance">—</strong>
           <span>cm</span>
         </div>
-        <span class="status-badge status-waiting" id="selectedStatus">Waiting</span>
+        <span class="status-badge status-waiting" id="selectedStatus">No data</span>
         <dl class="detail-list">
           <div><dt>ESP32 sensor index</dt><dd id="selectedIndex">0</dd></div>
           <div><dt>Update rate</dt><dd id="selectedFrequency">—</dd></div>
           <div><dt>Last update</dt><dd id="selectedUpdated">—</dd></div>
-          <div><dt>Diagnostic</dt><dd id="selectedDiagnostic">No samples yet</dd></div>
+          <div><dt>Diagnostic</dt><dd id="selectedDiagnostic">No vehicle data</dd></div>
         </dl>
         <p class="logic-note">Follow logic: <strong id="logicState">not provided</strong></p>
       </article>
@@ -131,9 +150,6 @@
       <div class="sensor-grid" id="sensorGrid" aria-live="polite"></div>
     </section>
 
-    <p class="page-message" id="pageMessage" role="status" aria-live="polite">
-      Start simulation to preview the dashboard, or connect an ESP32 over USB.
-    </p>
   </main>
 
   <footer class="page-footer">

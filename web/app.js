@@ -21,8 +21,11 @@ const elements = {
   connectionLabel: document.querySelector("#connectionLabel"),
   connectSerial: document.querySelector("#connectSerial"),
   disconnectSerial: document.querySelector("#disconnectSerial"),
-  startSimulation: document.querySelector("#startSimulation"),
-  stopSimulation: document.querySelector("#stopSimulation"),
+  serialReadState: document.querySelector("#serialReadState"),
+  serialDevice: document.querySelector("#serialDevice"),
+  serialReceiveCount: document.querySelector("#serialReceiveCount"),
+  serialTelemetryCount: document.querySelector("#serialTelemetryCount"),
+  serialLastLine: document.querySelector("#serialLastLine"),
   scanNumber: document.querySelector("#scanNumber"),
   scanAge: document.querySelector("#scanAge"),
   validCount: document.querySelector("#validCount"),
@@ -57,17 +60,24 @@ const sensorStates = new Map(
 );
 
 let selectedSensorId = SENSOR_CONFIGS[0].id;
-let currentScanNumber = null;
 let currentScanRateHz = null;
 let lastScanReceivedAt = null;
 let lastDeviceTimestamp = null;
-let simulationTimer = null;
-let simulationScanNumber = 0;
+let serialConnectedAt = null;
+let staleNoticeShown = false;
 let serialPort = null;
 let serialReader = null;
 let serialReadTask = null;
 let serialLineBuffer = "";
 let diagnosticsCount = 0;
+let serialBytesSeen = 0;
+let serialLinesSeen = 0;
+let telemetryLinesSeen = 0;
+let acceptedTelemetryRecords = 0;
+let serialLastByteAt = null;
+let serialLastLinePreview = "";
+let serialDeviceDescription = "—";
+let serialReadError = null;
 
 function createSvgElement(tagName, attributes = {}) {
   const element = document.createElementNS("http://www.w3.org/2000/svg", tagName);
@@ -80,7 +90,7 @@ function createSvgElement(tagName, attributes = {}) {
 function sensorHealth(sensorId, now = performance.now()) {
   const state = sensorStates.get(sensorId);
   if (!state || state.status === "waiting") {
-    return { label: "Waiting", kind: "waiting", diagnostic: "No samples yet" };
+    return { label: "No data", kind: "waiting", diagnostic: "No vehicle telemetry received" };
   }
   if (state.lastUpdatedAt !== null && now - state.lastUpdatedAt > 2500) {
     return { label: "Stale", kind: "neutral", diagnostic: "No recent update" };
@@ -238,6 +248,29 @@ function setMessage(message, kind = "info") {
   elements.pageMessage.dataset.kind = kind;
 }
 
+function clearTelemetry() {
+  for (const state of sensorStates.values()) {
+    state.status = "waiting";
+    state.reason = null;
+    state.distanceCm = null;
+    state.history = [];
+    state.lastUpdatedAt = null;
+    state.lastFrequencyHz = null;
+  }
+  currentScanRateHz = null;
+  lastScanReceivedAt = null;
+  lastDeviceTimestamp = null;
+  staleNoticeShown = false;
+  diagnosticsCount = 0;
+  elements.scanNumber.textContent = "—";
+  elements.scanAge.textContent = "No vehicle data";
+  elements.validCount.innerHTML = `— <small>/ ${SENSOR_CONFIGS.length}</small>`;
+  elements.scanDuration.innerHTML = "— <small>ms</small>";
+  elements.scanRate.innerHTML = "— <small>Hz</small>";
+  elements.logicState.textContent = "not provided";
+  render();
+}
+
 function validateTelemetry(record) {
   if (!(
     record !== null &&
@@ -280,21 +313,16 @@ function validateTelemetry(record) {
   );
 }
 
-function receiveTelemetry(record, source) {
+function receiveTelemetry(record) {
   if (!validateTelemetry(record)) {
     diagnosticsCount += 1;
     setMessage(`Ignored malformed or unsupported telemetry record (${diagnosticsCount}).`, "warning");
     return;
   }
+  acceptedTelemetryRecords += 1;
 
   if (lastDeviceTimestamp !== null && record.timestamp_ms < lastDeviceTimestamp) {
-    for (const state of sensorStates.values()) {
-      state.history = [];
-      state.lastUpdatedAt = null;
-      state.lastFrequencyHz = null;
-      state.status = "waiting";
-      state.distanceCm = null;
-    }
+    clearTelemetry();
     setMessage("Device timestamp restarted; cleared old chart history.");
   }
   lastDeviceTimestamp = record.timestamp_ms;
@@ -304,8 +332,6 @@ function receiveTelemetry(record, source) {
     currentScanRateHz = 1000 / (now - lastScanReceivedAt);
   }
   lastScanReceivedAt = now;
-  currentScanNumber = record.scan;
-
   for (const item of record.sensors) {
     if (!item || typeof item.id !== "string" || !sensorStates.has(item.id)) continue;
     const state = sensorStates.get(item.id);
@@ -337,14 +363,16 @@ function receiveTelemetry(record, source) {
   elements.validCount.innerHTML = `${validCount} <small>/ ${SENSOR_CONFIGS.length}</small>`;
   elements.scanDuration.innerHTML = `${Math.round(record.scan_duration_ms)} <small>ms</small>`;
   elements.scanNumber.textContent = String(record.scan);
-  elements.scanAge.textContent = `${source} · just updated`;
+  elements.scanAge.textContent = "just updated";
   elements.scanRate.innerHTML = currentScanRateHz === null
     ? `— <small>Hz</small>`
     : `${currentScanRateHz.toFixed(1)} <small>Hz</small>`;
   elements.logicState.textContent = record.logic?.state ?? "not provided";
+  setConnection("serial", "USB receiving telemetry");
   setMessage(
-    `Scan ${record.scan} received from ${source.toLowerCase()}. ${diagnosticsCount ? `${diagnosticsCount} record(s) ignored.` : ""}`.trim(),
+    `Scan ${record.scan} received from USB serial.${diagnosticsCount ? ` ${diagnosticsCount} malformed record(s) ignored.` : ""}`,
   );
+  staleNoticeShown = false;
   render();
 }
 
@@ -480,10 +508,14 @@ function render() {
 
 function processSerialLine(line) {
   const trimmed = line.trim();
+  if (!trimmed) return;
+  serialLinesSeen += 1;
+  serialLastLinePreview = trimmed.slice(0, 180);
   if (!trimmed.startsWith(TELEMETRY_PREFIX)) return;
+  telemetryLinesSeen += 1;
 
   try {
-    receiveTelemetry(JSON.parse(trimmed.slice(TELEMETRY_PREFIX.length)), "USB serial");
+    receiveTelemetry(JSON.parse(trimmed.slice(TELEMETRY_PREFIX.length)));
   } catch {
     diagnosticsCount += 1;
     setMessage(`Could not parse telemetry JSON (${diagnosticsCount} malformed record(s)).`, "warning");
@@ -496,6 +528,8 @@ async function readSerialStream(reader) {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+      serialBytesSeen += value.byteLength;
+      serialLastByteAt = performance.now();
       serialLineBuffer += decoder.decode(value, { stream: true });
       const lines = serialLineBuffer.split(/\r?\n/);
       serialLineBuffer = lines.pop() ?? "";
@@ -506,8 +540,11 @@ async function readSerialStream(reader) {
     serialLineBuffer = "";
   } catch (error) {
     if (serialPort) {
+      clearTelemetry();
+      serialConnectedAt = null;
+      serialReadError = error.message;
       setConnection("error", "USB read failed");
-      setMessage(`Serial read failed: ${error.message}`, "error");
+      setMessage(`Serial read failed; no vehicle data is available: ${error.message}`, "error");
     }
   } finally {
     reader.releaseLock();
@@ -517,15 +554,13 @@ async function readSerialStream(reader) {
 
 async function connectSerial() {
   if (!("serial" in navigator)) {
-    setMessage("Web Serial is unavailable in this browser. Use a supported Chromium browser or start simulation.", "warning");
+    setMessage("Web Serial is unavailable in this browser. No vehicle data is available.", "warning");
     return;
   }
   if (!window.isSecureContext) {
     setMessage("Web Serial requires a secure page. Open this page from localhost or HTTPS.", "warning");
     return;
   }
-  if (simulationTimer !== null) stopSimulation();
-
   try {
     const port = await navigator.serial.requestPort();
     await port.open({ baudRate: SERIAL_BAUD_RATE });
@@ -535,13 +570,30 @@ async function connectSerial() {
     }
     serialPort = port;
     serialLineBuffer = "";
+    serialBytesSeen = 0;
+    serialLinesSeen = 0;
+    telemetryLinesSeen = 0;
+    acceptedTelemetryRecords = 0;
+    serialLastByteAt = null;
+    serialLastLinePreview = "";
+    serialReadError = null;
+    const deviceInfo = port.getInfo();
+    const vendorId = Number.isInteger(deviceInfo.usbVendorId)
+      ? `VID 0x${deviceInfo.usbVendorId.toString(16).padStart(4, "0").toUpperCase()}`
+      : null;
+    const productId = Number.isInteger(deviceInfo.usbProductId)
+      ? `PID 0x${deviceInfo.usbProductId.toString(16).padStart(4, "0").toUpperCase()}`
+      : null;
+    serialDeviceDescription = [vendorId, productId].filter(Boolean).join(" · ")
+      || "USB vendor/product IDs not exposed";
     serialReader = port.readable.getReader();
+    clearTelemetry();
+    serialConnectedAt = performance.now();
     serialReadTask = readSerialStream(serialReader);
     elements.connectSerial.hidden = true;
     elements.disconnectSerial.hidden = false;
-    elements.startSimulation.disabled = true;
     setConnection("serial", "USB connected · 115200 baud");
-    setMessage("USB connected. Waiting for the next @TELEMETRY record.");
+    setMessage("USB connected. Waiting for real vehicle telemetry; no readings received yet.");
   } catch (error) {
     setConnection("error", "USB connection failed");
     setMessage(`Could not connect to serial device: ${error.message}`, "error");
@@ -551,11 +603,13 @@ async function connectSerial() {
 async function disconnectSerial() {
   const port = serialPort;
   serialPort = null;
+  serialConnectedAt = null;
+  let closeError = null;
   if (serialReader) {
     try {
       await serialReader.cancel();
     } catch (error) {
-      setMessage(`Could not stop serial reader cleanly: ${error.message}`, "warning");
+      closeError = `Could not stop serial reader cleanly: ${error.message}`;
     }
   }
   if (serialReadTask) {
@@ -565,86 +619,80 @@ async function disconnectSerial() {
   if (port) {
     try {
       await port.close();
-      setMessage("USB serial disconnected.");
     } catch (error) {
-      setMessage(`Could not close USB serial port: ${error.message}`, "error");
+      closeError = `Could not close USB serial port: ${error.message}`;
     }
   }
-  setConnection("disconnected", "Not connected");
+  clearTelemetry();
+  setConnection(closeError ? "error" : "disconnected", closeError ? "USB close failed" : "No vehicle connected");
   elements.connectSerial.hidden = false;
   elements.disconnectSerial.hidden = true;
-  elements.startSimulation.disabled = false;
-}
-
-function mockTelemetry() {
-  simulationScanNumber += 1;
-  const elapsed = performance.now();
-  const sensors = SENSOR_CONFIGS.map((sensor) => {
-    const wobble = Math.sin(elapsed / 520 + sensor.index * 0.9) * 7;
-    let status = "valid";
-    let reason = null;
-    let distance = 48 + sensor.index * 15 + wobble;
-    if (simulationScanNumber % 9 === 0 && sensor.index === 4) {
-      status = "timeout";
-      reason = "timeout";
-      distance = null;
-    } else if (simulationScanNumber % 13 === 0 && sensor.index === 1) {
-      status = "invalid";
-      reason = "out_of_range";
-      distance = null;
-    }
-    return {
-      id: sensor.id,
-      direction: sensor.direction,
-      distance_cm: status === "valid" ? Number(distance.toFixed(1)) : null,
-      status,
-      reason,
-    };
-  });
-  return {
-    v: TELEMETRY_VERSION,
-    type: "scan",
-    timestamp_ms: Math.round(elapsed),
-    scan: simulationScanNumber,
-    scan_duration_ms: 480,
-    valid_count: sensors.filter((sensor) => sensor.status === "valid").length,
-    logic: { state: null, target_direction_deg: null },
-    sensors,
-  };
-}
-
-function startSimulation() {
-  if (simulationTimer !== null) return;
-  if (serialPort) {
-    setMessage("Disconnect USB serial before starting simulation.", "warning");
-    return;
-  }
-  simulationScanNumber = 0;
-  setConnection("simulation", "Simulation mode");
-  elements.startSimulation.disabled = true;
-  elements.stopSimulation.disabled = false;
-  receiveTelemetry(mockTelemetry(), "Simulation");
-  simulationTimer = window.setInterval(
-    () => receiveTelemetry(mockTelemetry(), "Simulation"),
-    480,
+  setMessage(
+    closeError
+      ? `${closeError}. No vehicle data is displayed.`
+      : "Vehicle disconnected. No data is available until real telemetry arrives.",
+    closeError ? "error" : "info",
   );
 }
 
-function stopSimulation() {
-  if (simulationTimer !== null) {
-    window.clearInterval(simulationTimer);
-    simulationTimer = null;
-  }
-  elements.startSimulation.disabled = false;
-  elements.stopSimulation.disabled = true;
-  if (!serialPort) setConnection("disconnected", "Not connected");
-  setMessage("Simulation stopped. Existing readings remain visible.");
-}
-
 function updateClock() {
-  if (lastScanReceivedAt === null) return;
+  elements.serialDevice.textContent = serialDeviceDescription;
+  elements.serialReceiveCount.textContent = `${serialBytesSeen} bytes · ${serialLinesSeen} lines`;
+  elements.serialTelemetryCount.textContent =
+    `${telemetryLinesSeen} prefixed · ${acceptedTelemetryRecords} accepted · ${diagnosticsCount} rejected`;
+  elements.serialLastLine.textContent = serialLastLinePreview || (
+    serialLineBuffer.trim()
+      ? `${serialLineBuffer.trim().slice(0, 180)} (waiting for line ending)`
+      : "—"
+  );
+  if (!serialPort) {
+    elements.serialReadState.textContent = "Not connected";
+  } else if (serialReadError) {
+    elements.serialReadState.textContent = `Read failed: ${serialReadError}`;
+  } else if (serialLastByteAt === null) {
+    const waitSeconds = Math.max(0, (performance.now() - serialConnectedAt) / 1000);
+    elements.serialReadState.textContent =
+      `Reader active · waiting ${waitSeconds.toFixed(1)} s · 0 bytes`;
+  } else {
+    const idleSeconds = Math.max(0, (performance.now() - serialLastByteAt) / 1000);
+    elements.serialReadState.textContent = idleSeconds > 1.5
+      ? `Reader active · no bytes for ${idleSeconds.toFixed(1)} s`
+      : "Reader active · receiving bytes";
+  }
+
+  if (lastScanReceivedAt === null) {
+    if (serialPort && serialConnectedAt !== null &&
+        performance.now() - serialConnectedAt > 3000 && !staleNoticeShown) {
+      let label;
+      let message;
+      if (telemetryLinesSeen > 0) {
+        label = "USB open · invalid telemetry";
+        message = `Received ${telemetryLinesSeen} @TELEMETRY line(s), but none was valid. Check the firmware output format.`;
+      } else if (serialLinesSeen > 0) {
+        label = "USB open · text only";
+        message = `Received ${serialLinesSeen} serial text line(s), but none starts with @TELEMETRY. Upload the updated telemetry firmware.`;
+      } else if (serialBytesSeen > 0) {
+        label = "USB open · incomplete line";
+        message = `Received ${serialBytesSeen} serial byte(s), but no complete text line. Check the serial format.`;
+      } else {
+        label = "USB open · no bytes";
+        message = "No serial bytes received. Close Serial Monitor/other COM readers, then check the selected port and ESP32.";
+      }
+      setConnection("error", label);
+      setMessage(message, "warning");
+      staleNoticeShown = true;
+    }
+    return;
+  }
   const ageSeconds = (performance.now() - lastScanReceivedAt) / 1000;
-  elements.scanAge.textContent = `${ageSeconds.toFixed(1)} s since last scan`;
+  elements.scanAge.textContent = ageSeconds > 2.5
+    ? `${ageSeconds.toFixed(1)} s · stale`
+    : `${ageSeconds.toFixed(1)} s since last scan`;
+  if (ageSeconds > 2.5 && !staleNoticeShown) {
+    setConnection("error", "USB telemetry stale");
+    setMessage("No new vehicle telemetry for 2.5 seconds. Displayed readings are stale.", "warning");
+    staleNoticeShown = true;
+  }
   render();
 }
 
@@ -652,16 +700,14 @@ buildSensorView();
 render();
 elements.connectSerial.addEventListener("click", connectSerial);
 elements.disconnectSerial.addEventListener("click", disconnectSerial);
-elements.startSimulation.addEventListener("click", startSimulation);
-elements.stopSimulation.addEventListener("click", stopSimulation);
 window.addEventListener("resize", render);
 
 if (!("serial" in navigator)) {
   elements.connectSerial.disabled = true;
   elements.connectSerial.title = "Web Serial is not supported in this browser.";
-  setMessage("Web Serial is unavailable in this browser. Use a supported Chromium browser or start simulation.", "warning");
+  setMessage("No vehicle connected. Web Serial is unavailable in this browser, so no readings can be displayed.", "warning");
 } else if (!window.isSecureContext) {
-  setMessage("Web Serial requires a secure page. Open this page from localhost or HTTPS.", "warning");
+  setMessage("No vehicle data. Web Serial requires a secure page; open this page from localhost or HTTPS.", "warning");
 }
 
 if ("serial" in navigator) {
