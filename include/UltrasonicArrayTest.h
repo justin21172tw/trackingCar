@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include "Config.h"
+#include "StandardizedTelemetry.h"
 #include "UltrasonicArray.h"
 
 namespace UltrasonicArrayTest {
@@ -45,6 +46,9 @@ inline void runPollingCycle(UltrasonicArray& array) {
     ++scanNumber;
     uint8_t validCount = 0;
     const uint32_t scanStartMs = millis();
+    StandardizedTelemetry::Sensor telemetrySensors[
+        Config::UltrasonicArrayPins::SENSOR_COUNT
+    ];
 
     Serial.printf(
         "\n--- Scan #%lu started at %lu ms | Order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR ---\n",
@@ -67,8 +71,9 @@ inline void runPollingCycle(UltrasonicArray& array) {
             direction
         );
 
-        const float distanceCm = array.measureDistance(sensorIndex);
-        if (distanceCm > 0.0f) {
+        const UltrasonicArray::MeasurementResult measurement =
+            array.measureDetailed(sensorIndex);
+        if (measurement.isValid()) {
             ++validCount;
             Serial.printf(
                 "[%u/%u] %s | Trig: MCP23017 GPA%u (pin %u) | Echo: ESP32 GPIO %u | Status: VALID | Distance: %.1f cm\n",
@@ -78,7 +83,7 @@ inline void runPollingCycle(UltrasonicArray& array) {
                 static_cast<unsigned>(trigPin),
                 static_cast<unsigned>(trigPin),
                 static_cast<unsigned>(echoPin),
-                distanceCm
+                measurement.distanceCm
             );
         } else {
             Serial.printf(
@@ -91,8 +96,39 @@ inline void runPollingCycle(UltrasonicArray& array) {
                 static_cast<unsigned>(echoPin)
             );
         }
+
+        StandardizedTelemetry::SensorStatus telemetryStatus =
+            StandardizedTelemetry::SensorStatus::Invalid;
+        StandardizedTelemetry::SensorReason telemetryReason =
+            StandardizedTelemetry::SensorReason::OutOfRange;
+
+        switch (measurement.status) {
+            case UltrasonicArray::MeasurementStatus::Valid:
+                telemetryStatus = StandardizedTelemetry::SensorStatus::Valid;
+                telemetryReason = StandardizedTelemetry::SensorReason::None;
+                break;
+            case UltrasonicArray::MeasurementStatus::Timeout:
+                telemetryStatus = StandardizedTelemetry::SensorStatus::Timeout;
+                telemetryReason = StandardizedTelemetry::SensorReason::Timeout;
+                break;
+            case UltrasonicArray::MeasurementStatus::InvalidRange:
+                telemetryReason = StandardizedTelemetry::SensorReason::OutOfRange;
+                break;
+            case UltrasonicArray::MeasurementStatus::InvalidSensor:
+                telemetryReason = StandardizedTelemetry::SensorReason::InvalidSensor;
+                break;
+        }
+
+        telemetrySensors[sensorIndex] = {
+            sensorIndex,
+            direction,
+            measurement.distanceCm,
+            telemetryStatus,
+            telemetryReason
+        };
     }
 
+    const uint32_t scanDurationMs = millis() - scanStartMs;
     Serial.printf(
         "--- Scan #%lu complete | Valid: %u/%u | No valid reading: %u/%u | Duration: %lu ms | Motor: STOPPED ---\n",
         static_cast<unsigned long>(scanNumber),
@@ -100,8 +136,18 @@ inline void runPollingCycle(UltrasonicArray& array) {
         static_cast<unsigned>(array.getSensorCount()),
         static_cast<unsigned>(array.getSensorCount() - validCount),
         static_cast<unsigned>(array.getSensorCount()),
-        static_cast<unsigned long>(millis() - scanStartMs)
+        static_cast<unsigned long>(scanDurationMs)
     );
+
+    const StandardizedTelemetry::Scan telemetryScan = {
+        millis(),
+        scanNumber,
+        scanDurationMs,
+        validCount,
+        array.getSensorCount(),
+        telemetrySensors
+    };
+    StandardizedTelemetry::writeLine(Serial, telemetryScan);
 }
 
 }

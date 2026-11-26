@@ -61,22 +61,29 @@ unsigned long UltrasonicArray::measureEchoDurationUs(uint8_t sensorIndex) {
 }
 
 float UltrasonicArray::measureDistance(uint8_t sensorIndex) {
+    const MeasurementResult result = measureDetailed(sensorIndex);
+    return result.isValid() ? result.distanceCm : -1.0f;
+}
+
+UltrasonicArray::MeasurementResult UltrasonicArray::measureDetailed(
+    uint8_t sensorIndex
+) {
     if (sensorIndex >= Config::UltrasonicArrayPins::SENSOR_COUNT) {
-        return -1.0f;
+        return {-1.0f, MeasurementStatus::InvalidSensor};
     }
 
     const unsigned long durationUs = measureEchoDurationUs(sensorIndex);
     if (durationUs == 0) {
-        return -1.0f;
+        return {-1.0f, MeasurementStatus::Timeout};
     }
 
     const float distanceCm = durationUs * SOUND_SPEED_FACTOR;
     if (distanceCm < Config::UltrasonicArrayPins::MIN_DISTANCE_CM ||
         distanceCm > Config::UltrasonicArrayPins::MAX_DISTANCE_CM) {
-        return -1.0f;
+        return {-1.0f, MeasurementStatus::InvalidRange};
     }
 
-    return distanceCm;
+    return {distanceCm, MeasurementStatus::Valid};
 }
 
 float UltrasonicArray::getSensorAngle(uint8_t sensorIndex) const {
