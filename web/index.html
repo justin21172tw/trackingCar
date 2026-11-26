@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f9fc">
+  <title>Tracking Car Telemetry</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="page-header">
+    <div>
+      <p class="eyebrow">ESP32 / SENSOR DEBUGGER</p>
+      <h1>Tracking car telemetry</h1>
+      <p class="intro">Live ultrasonic readings, mapped around the chassis.</p>
+    </div>
+    <div class="connection-controls">
+      <span class="connection-state" id="connectionState" data-state="disconnected">
+        <span class="state-dot" aria-hidden="true"></span>
+        <span id="connectionLabel">Not connected</span>
+      </span>
+      <button class="button button-primary" id="connectSerial" type="button">Connect USB</button>
+      <button class="button button-primary" id="disconnectSerial" type="button" hidden>Disconnect USB</button>
+      <button class="button" id="startSimulation" type="button">Start simulation</button>
+      <button class="button button-quiet" id="stopSimulation" type="button" disabled>Stop</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="summary-grid" aria-label="Scan summary">
+      <article class="summary-card">
+        <span class="summary-label">Latest scan</span>
+        <strong id="scanNumber">—</strong>
+        <span class="summary-caption" id="scanAge">Waiting for telemetry</span>
+      </article>
+      <article class="summary-card">
+        <span class="summary-label">Valid sensors</span>
+        <strong id="validCount">— <small>/ 8</small></strong>
+        <span class="summary-caption">Current scan</span>
+      </article>
+      <article class="summary-card">
+        <span class="summary-label">Scan duration</span>
+        <strong id="scanDuration">— <small>ms</small></strong>
+        <span class="summary-caption">Full sensor sweep</span>
+      </article>
+      <article class="summary-card">
+        <span class="summary-label">Scan rate</span>
+        <strong id="scanRate">— <small>Hz</small></strong>
+        <span class="summary-caption">Based on recent scans</span>
+      </article>
+    </section>
+
+    <section class="overview-grid" aria-label="Vehicle and selected sensor">
+      <article class="panel vehicle-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">SPATIAL VIEW</p>
+            <h2>Sensor positions</h2>
+          </div>
+          <span class="panel-note">Select a sensor to inspect</span>
+        </div>
+        <div class="vehicle-legend">
+          <span><i class="legend-swatch legend-valid"></i>Valid</span>
+          <span><i class="legend-swatch legend-warning"></i>Attention</span>
+          <span><i class="legend-swatch legend-inactive"></i>No reading</span>
+        </div>
+        <div class="vehicle-wrap">
+          <svg id="carSvg" class="car-svg" viewBox="0 0 640 520" role="img" aria-labelledby="carTitle carDescription">
+            <title id="carTitle">Top view of the tracking car and its eight ultrasonic sensors</title>
+            <desc id="carDescription">The car faces up. Sensor markers around the chassis are interactive.</desc>
+            <defs>
+              <linearGradient id="bodyFill" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0" stop-color="#ffffff"></stop>
+                <stop offset="1" stop-color="#f4f7fb"></stop>
+              </linearGradient>
+            </defs>
+            <path class="chassis" d="M320 45 C351 46 376 64 397 91 L472 185 C492 211 505 238 501 265 L482 382 C477 416 452 444 420 450 L365 461 C336 467 304 467 275 461 L220 450 C188 444 163 416 158 382 L139 265 C135 238 148 211 168 185 L243 91 C264 64 289 46 320 45 Z"></path>
+            <path class="chassis-detail" d="M259 103 C281 83 300 75 320 75 C340 75 359 83 381 103 L445 188 C461 209 472 231 469 249 L453 357 C450 375 438 389 420 393"></path>
+            <rect class="wheel-slot" x="146" y="188" width="48" height="132" rx="22"></rect>
+            <rect class="wheel" x="153" y="207" width="35" height="92" rx="15"></rect>
+            <rect class="wheel-slot" x="446" y="188" width="48" height="132" rx="22"></rect>
+            <rect class="wheel" x="452" y="207" width="35" height="92" rx="15"></rect>
+            <path class="deck-line" d="M233 206 C269 191 371 191 407 206"></path>
+            <rect class="electronics" x="259" y="222" width="122" height="110" rx="18"></rect>
+            <rect class="electronics-detail" x="276" y="239" width="88" height="76" rx="10"></rect>
+            <circle class="board-dot" cx="294" cy="256" r="4"></circle>
+            <circle class="board-dot" cx="346" cy="256" r="4"></circle>
+            <path class="board-line" d="M294 277 H346 M294 291 H330 M294 305 H346"></path>
+            <path class="front-arrow" d="M320 50 V22 M309 34 L320 22 L331 34"></path>
+            <text class="orientation-label" x="320" y="15" text-anchor="middle">FRONT · 0°</text>
+            <text class="side-label" x="76" y="260" text-anchor="middle">LEFT</text>
+            <text class="side-label" x="564" y="260" text-anchor="middle">RIGHT</text>
+            <g id="sensorLayer" aria-label="Ultrasonic sensor markers"></g>
+          </svg>
+        </div>
+      </article>
+
+      <article class="panel selected-panel" id="selectedPanel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">INSPECTOR</p>
+            <h2>Selected sensor</h2>
+          </div>
+          <span class="sensor-id-pill" id="selectedId">S0</span>
+        </div>
+        <p class="selected-direction" id="selectedDirection">F · Front</p>
+        <div class="selected-reading">
+          <strong id="selectedDistance">—</strong>
+          <span>cm</span>
+        </div>
+        <span class="status-badge status-waiting" id="selectedStatus">Waiting</span>
+        <dl class="detail-list">
+          <div><dt>ESP32 sensor index</dt><dd id="selectedIndex">0</dd></div>
+          <div><dt>Update rate</dt><dd id="selectedFrequency">—</dd></div>
+          <div><dt>Last update</dt><dd id="selectedUpdated">—</dd></div>
+          <div><dt>Diagnostic</dt><dd id="selectedDiagnostic">No samples yet</dd></div>
+        </dl>
+        <p class="logic-note">Follow logic: <strong id="logicState">not provided</strong></p>
+      </article>
+    </section>
+
+    <section class="sensor-section">
+      <div class="panel-heading sensor-section-heading">
+        <div>
+          <p class="eyebrow">RECENT HISTORY · 3 SECONDS</p>
+          <h2>Sensor readings</h2>
+        </div>
+        <span class="panel-note">Distance in cm · newest sample at right</span>
+      </div>
+      <div class="sensor-grid" id="sensorGrid" aria-live="polite"></div>
+    </section>
+
+    <p class="page-message" id="pageMessage" role="status" aria-live="polite">
+      Start simulation to preview the dashboard, or connect an ESP32 over USB.
+    </p>
+  </main>
+
+  <footer class="page-footer">
+    <span>Telemetry schema v1</span>
+    <span>USB records are read from lines prefixed with <code>@TELEMETRY</code></span>
+  </footer>
+</body>
+</html>

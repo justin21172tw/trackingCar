@@ -13,6 +13,22 @@
 
 class UltrasonicArray {
 public:
+    enum class MeasurementStatus : uint8_t {
+        Valid,
+        Timeout,
+        InvalidRange,
+        InvalidSensor
+    };
+
+    struct MeasurementResult {
+        float distanceCm;
+        MeasurementStatus status;
+
+        bool isValid() const {
+            return status == MeasurementStatus::Valid;
+        }
+    };
+
     UltrasonicArray();
 
     /**
@@ -34,6 +50,11 @@ public:
      * @return float 測得距離 (公分)。若無回波或超出範圍則返回 -1.0f
      */
     float measureDistance(uint8_t sensorIndex);
+
+    /**
+     * @brief 執行一次測距並回報有效、逾時、超出量程或索引無效狀態
+     */
+    MeasurementResult measureDetailed(uint8_t sensorIndex);
 
     /**
      * @brief 取得指定感測器之實體安裝方位角 (度，車頭前方為 0°)
