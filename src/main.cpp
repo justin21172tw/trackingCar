@@ -1,8 +1,8 @@
 #include <Arduino.h>
-#include <math.h>
 #include "Config.h"
 #include "MotorController.h"
 #include "UltrasonicArray.h"
+#include "UltrasonicArrayTest.h"
 
 namespace {
 
@@ -14,114 +14,50 @@ MotorController motor(
 );
 UltrasonicArray ultrasonicArray;
 bool ultrasonicArrayReady = false;
-
-void followTarget(uint8_t sensorIndex, float distanceCm) {
-    if (distanceCm < 0.0f ||
-        distanceCm > Config::TrackingParams::MAX_TRACK_DISTANCE_CM) {
-        motor.stop();
-        Serial.printf(
-            "event=tracking status=target_lost sensor=%u distance_cm=%.1f motor_left=%d motor_right=%d\n",
-            sensorIndex,
-            distanceCm,
-            motor.getCurrentLeftSpeed(),
-            motor.getCurrentRightSpeed()
-        );
-        return;
-    }
-
-    if (distanceCm < Config::TrackingParams::STOP_DISTANCE_CM) {
-        motor.brake();
-        Serial.printf(
-            "event=tracking status=too_close sensor=%u distance_cm=%.1f motor_left=%d motor_right=%d\n",
-            sensorIndex,
-            distanceCm,
-            motor.getCurrentLeftSpeed(),
-            motor.getCurrentRightSpeed()
-        );
-        return;
-    }
-
-    const float targetAngle = ultrasonicArray.getSensorAngle(sensorIndex);
-    const int baseSpeed =
-        distanceCm <= Config::TrackingParams::TARGET_DISTANCE_CM + 5.0f
-            ? 120
-            : Config::MotorParams::DEFAULT_SPEED;
-    const float steering = constrain(targetAngle / 70.0f, -1.0f, 1.0f);
-    const int adjustment =
-        static_cast<int>(baseSpeed * 0.75f * fabsf(steering));
-
-    int leftSpeed = baseSpeed;
-    int rightSpeed = baseSpeed;
-    if (steering < 0.0f) {
-        leftSpeed -= adjustment;
-        rightSpeed += adjustment;
-    } else {
-        leftSpeed += adjustment;
-        rightSpeed -= adjustment;
-    }
-    motor.drive(leftSpeed, rightSpeed);
-
-    Serial.printf(
-        "event=tracking status=following sensor=%u echo_gpio=%u angle_deg=%.1f distance_cm=%.1f motor_left=%d motor_right=%d\n",
-        sensorIndex,
-        ultrasonicArray.getEchoPin(sensorIndex),
-        targetAngle,
-        distanceCm,
-        motor.getCurrentLeftSpeed(),
-        motor.getCurrentRightSpeed()
-    );
-}
+uint32_t lastInitializationStatusMs = 0;
 
 }
 
 void setup() {
     Serial.begin(Config::SERIAL_BAUD_RATE);
-    motor.init();
-    motor.setTrim(
-        Config::MotorParams::DEFAULT_TRIM_LEFT,
-        Config::MotorParams::DEFAULT_TRIM_RIGHT
+    delay(500);
+    Serial.println(
+        "event=system_start level=info mode=ultrasonic_array_polling motor_action=disabled"
     );
+
+    motor.init();
+    motor.stop();
 
     ultrasonicArrayReady = ultrasonicArray.init();
     if (!ultrasonicArrayReady) {
-        motor.stop();
-        Serial.println("event=setup level=error component=ultrasonic_array message=mcp23017_init_failed");
+        Serial.printf(
+            "event=test_init level=error status=failed component=mcp23017 i2c_address=0x%02X sda_gpio=%d scl_gpio=%d action=check_power_and_i2c_wiring\n",
+            static_cast<unsigned>(Config::UltrasonicArrayPins::MCP_I2C_ADDR),
+            Config::UltrasonicArrayPins::I2C_SDA_PIN,
+            Config::UltrasonicArrayPins::I2C_SCL_PIN
+        );
         return;
     }
 
-    Serial.printf(
-        "event=setup level=info sensor_count=%u echo_pins=26,27,32,33,34,35,36,39\n",
-        ultrasonicArray.getSensorCount()
-    );
+    UltrasonicArrayTest::printStartupStatus(ultrasonicArray);
 }
 
 void loop() {
     if (!ultrasonicArrayReady) {
         motor.stop();
-        delay(1000);
-        return;
-    }
-
-    int targetSensor = -1;
-    float targetDistance = -1.0f;
-    float nearestDistance = Config::TrackingParams::MAX_TRACK_DISTANCE_CM;
-
-    for (uint8_t sensorIndex = 0;
-         sensorIndex < ultrasonicArray.getSensorCount();
-         ++sensorIndex) {
-        const float distanceCm = ultrasonicArray.measureDistance(sensorIndex);
-        if (distanceCm > 0.0f && distanceCm <= nearestDistance) {
-            nearestDistance = distanceCm;
-            targetDistance = distanceCm;
-            targetSensor = sensorIndex;
+        const uint32_t now = millis();
+        if (now - lastInitializationStatusMs >= 2000) {
+            Serial.printf(
+                "event=test_wait level=error state=initialization_failed component=mcp23017 i2c_address=0x%02X sda_gpio=%d scl_gpio=%d action=check_power_and_i2c_wiring\n",
+                static_cast<unsigned>(Config::UltrasonicArrayPins::MCP_I2C_ADDR),
+                Config::UltrasonicArrayPins::I2C_SDA_PIN,
+                Config::UltrasonicArrayPins::I2C_SCL_PIN
+            );
+            lastInitializationStatusMs = now;
         }
-    }
-
-    if (targetSensor < 0) {
-        motor.stop();
-        Serial.println("event=tracking level=info status=no_target motor_left=0 motor_right=0");
+        delay(10);
         return;
     }
 
-    followTarget(static_cast<uint8_t>(targetSensor), targetDistance);
+    UltrasonicArrayTest::runPollingCycle(ultrasonicArray);
 }

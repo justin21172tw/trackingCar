@@ -10,12 +10,13 @@ include/
   MCP23017.h            MCP23017 I2C GPIO 驅動
   MotorController.h     雙輪差速馬達控制
   UltrasonicArray.h     八路超音波輪詢與距離量測
+  UltrasonicArrayTest.h 八路超音波順序輪詢及 Monitor 狀態輸出
 src/
   Config.cpp            全域 constexpr 陣列定義
   MCP23017.cpp          MCP23017 I2C GPIO 實作
   MotorController.cpp   馬達控制實作
   UltrasonicArray.cpp   Trig、Echo 脈衝量測及距離換算
-  main.cpp              初始化硬體、輪詢感測器並執行基本跟隨控制
+  main.cpp              初始化硬體並執行超音波測試模式
 ```
 
 ## 方向名稱
@@ -134,17 +135,23 @@ Motor A 預設為左輪，Motor B 預設為右輪。以下是 ESP32 到雙 H 橋
 
 馬達接到驅動器的 A、B 馬達輸出端；馬達電源接驅動器規格允許的外部電源，不要由 ESP32 3V3 腳供電。馬達電源負極、驅動器 GND、ESP32 GND 必須相連。L9110S、HG7881 等模組的端子標示可能不同，請依模組上的 A/B 輸入與馬達輸出標籤確認。
 
-## 程式量測流程
+## 目前測試模式與 Monitor 訊息
 
-1. ESP32 設定八個 Echo GPIO 為輸入，並透過 I2C 初始化 MCP23017。
-2. MCP23017 GPA0～GPA7 設為輸出，分別連接八顆感測器的 TRIG。
-3. 程式依序對每顆感測器送出 TRIG，再由該顆專用的 ESP32 Echo GPIO 量取高電位脈衝寬度。
-4. 依聲速將脈衝換算為距離，並用最近的有效量測控制馬達。
-5. 相鄰觸發預設至少間隔 60 ms，以降低聲波互相干擾；一輪量測時間會隨回波及超時情況變動。
+目前 `main.cpp` 只執行超音波測試，不執行目標跟隨或馬達動作。馬達控制器會初始化並保持停止。測試模組每輪依序輪詢感測器 0～7，也就是 F、FL、FR、LE、RI、R、RL、RR；每顆感測器開始量測及取得結果時都會輸出一筆 Monitor 訊息。
 
-目前跟隨控制為基本距離與方向差速控制，尚未使用 PID。感測器接腳、距離範圍及輪詢間隔可在 `include/Config.h` 調整。
+Monitor 鮑率為 `115200`，訊息採固定欄位的 `key=value` 格式，例如：
 
-> **方向控制提醒：**本文件的 F、FL、FR、LE、RI、R、RL、RR 是接線標籤。韌體目前仍沿用舊版前方扇形配置的方向控制映射，尚未按這八個方向重新設定；本次只更新接線文件，實車依新方向配置跟隨前，還需同步調整韌體方向控制。
+```text
+event=scan_start level=info scan=1 sensor_count=8 order=0_to_7
+event=sensor_measurement level=info state=measuring scan=1 sensor_index=0 direction=F trig_mcp=GPA0 echo_gpio=26
+event=sensor_measurement level=info state=valid scan=1 sensor_index=0 direction=F echo_gpio=26 distance_cm=42.3
+event=sensor_measurement level=warning state=no_valid_reading scan=1 sensor_index=1 direction=FL echo_gpio=27 reason=timeout_or_out_of_range
+event=scan_complete level=info scan=1 valid_count=7 no_valid_count=1 elapsed_ms=...
+```
+
+`state=measuring` 表示正在量測；`state=valid` 會附上距離；`state=no_valid_reading` 表示沒有有效距離，可能是逾時或超出量測範圍。每輪結束會列出有效與無效數量及耗時。相鄰 Trig 脈衝至少間隔 60 ms。
+
+若 MCP23017 初始化失敗，Monitor 會每 2 秒重複輸出 `event=test_wait`，指出目前使用的 I2C 位址、SDA/SCL GPIO 及檢查方向；即使 Monitor 比開機晚開啟，也能看到目前狀態。
 
 ## 編譯與上傳
 

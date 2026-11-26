@@ -28,7 +28,7 @@ public:
      * 1. 檢查 sensorIndex 是否在合法範圍內。
      * 2. 透過 MCP23017 對該感測器輸出 Trig 脈衝。
      * 3. 透過對應 ESP32 GPIO 計時 Echo 高電位脈衝。
-     * 4. 換算為公分並寫入快取，若超時或超出上下限返回 -1.0f。
+     * 4. 換算為公分並回傳；若超時或超出上下限則返回 -1.0f。
      * 
      * @param sensorIndex 感測器編號 (0 ~ sensorCount - 1)
      * @return float 測得距離 (公分)。若無回波或超出範圍則返回 -1.0f
