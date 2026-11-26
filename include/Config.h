@@ -24,8 +24,8 @@ namespace Config {
         static constexpr int8_t PIN_A1B = 19; // 控制腳 A-1B (PWM)
 
         // 馬達 B (Motor B - 右馬達)
-        static constexpr int8_t PIN_B1A = 22; // 控制腳 B-1A (PWM)
-        static constexpr int8_t PIN_B1B = 23; // 控制腳 B-1B (PWM)
+        static constexpr int8_t PIN_B1A = 16; // 控制腳 B-1A (PWM)
+        static constexpr int8_t PIN_B1B = 17; // 控制腳 B-1B (PWM)
     };
 
     // 馬達運作參數
@@ -38,25 +38,7 @@ namespace Config {
     };
 
     // ==========================================
-    // 2. 超音波感測器腳位設定 (Ultrasonic Sensor)
-    // ==========================================
-    // 單一測試用超音波腳位 (通常置於車頭正中央，角度 0.0 度)
-    struct UltrasonicSinglePin {
-        static constexpr uint8_t TRIG_PIN = 5;
-        static constexpr uint8_t ECHO_PIN = 17;
-        static constexpr float   ANGLE    = 0.0f; // 車頭正前方為 0 度
-    };
-
-    // 超音波感測參數
-    struct UltrasonicParams {
-        static constexpr float MIN_DISTANCE_CM = 2.0f;    // 最小可量測距離 (cm)
-        static constexpr float MAX_DISTANCE_CM = 300.0f;  // 最大可量測距離 (cm)
-        static constexpr float SOUND_SPEED_CM_US = 0.0343f; // 音速: 343 m/s = 0.0343 cm/us
-        static constexpr uint32_t TIMEOUT_US   = 20000;   // pulseIn 超時 (us)，約對應 340cm
-    };
-
-    // ==========================================
-    // 3. 多路超音波陣列設定 (CD74HC4067 複用器 + MCP23017 I2C 擴充)
+    // 2. 多路超音波陣列設定 (MCP23017 Trig + ESP32 獨立 Echo)
     // ==========================================
     struct UltrasonicArrayPins {
         static constexpr uint8_t SENSOR_COUNT = 8;
@@ -64,40 +46,20 @@ namespace Config {
         // MCP23017 I2C 設定
         static constexpr uint8_t MCP_I2C_ADDR   = 0x20;   // 預設 I2C 位址 (A0=A1=A2=GND)
         static constexpr int8_t  I2C_SDA_PIN    = 21;     // ESP32 SDA 腳位
-        static constexpr int8_t  I2C_SCL_PIN    = 4;      // ESP32 SCL 腳位 (避開與 Motor B1A: GPIO 22 衝突)
+        static constexpr int8_t  I2C_SCL_PIN    = 22;     // ESP32 SCL 腳位
         static constexpr uint32_t I2C_CLOCK     = 400000; // 400kHz Fast Mode
-
-        // CD74HC4067 多路複用器 (MUX) 控制模式
-        // true: 由 MCP23017 腳位控制 S0~S3 (節省 ESP32 腳位，僅需 I2C+Echo 共 3 腳)
-        // false: 由 ESP32 GPIO 直接控制 S0~S3 (極速切換)
-        static constexpr bool MUX_CONTROL_VIA_MCP = true;
-
-        // 當 MUX_CONTROL_VIA_MCP == false (由 ESP32 GPIO 直控 S0~S3)
-        static constexpr int8_t ESP32_MUX_S0 = 13;
-        static constexpr int8_t ESP32_MUX_S1 = 14;
-        static constexpr int8_t ESP32_MUX_S2 = 27;
-        static constexpr int8_t ESP32_MUX_S3 = 26;
-        static constexpr int8_t ESP32_MUX_EN = -1; // -1 表示實體接 GND 常時使能
-
-        // 當 MUX_CONTROL_VIA_MCP == true (由 MCP23017 控制 S0~S3: GPB4~GPB7 為 Pin 12~15)
-        static constexpr uint8_t MCP_MUX_S0  = 12; // GPB4
-        static constexpr uint8_t MCP_MUX_S1  = 13; // GPB5
-        static constexpr uint8_t MCP_MUX_S2  = 14; // GPB6
-        static constexpr uint8_t MCP_MUX_S3  = 15; // GPB7
-        static constexpr int8_t  MCP_MUX_EN  = -1; // -1 表示實體接 GND
-
-        // CD74HC4067 SIG (COM) 總回波線接至 ESP32 (建議使用僅輸入腳位 GPIO 34, 35, 36, 39)
-        static constexpr uint8_t ESP32_ECHO_PIN = 34;
 
         // 8 顆超音波 Trig 對應之 MCP23017 腳位 (GPA0~GPA7 為 0~7)
         static constexpr uint8_t TRIG_MCP_PINS[SENSOR_COUNT] = {
             0, 1, 2, 3, 4, 5, 6, 7
         };
 
-        // 8 顆超音波 Echo 對應之 CD74HC4067 頻道 (0 ~ 7)
-        static constexpr uint8_t ECHO_MUX_CHANNELS[SENSOR_COUNT] = {
-            0, 1, 2, 3, 4, 5, 6, 7
+        // 8 顆超音波 Echo 直接連接 ESP32，各腳位皆設定為輸入
+        static constexpr uint8_t ECHO_GPIO_PINS[SENSOR_COUNT] = {
+            26, 27, 32, 33, 34, 35, 36, 39
         };
+
+        static constexpr uint32_t MIN_PING_INTERVAL_MS = 60;
 
         // 8 顆超音波方位角 (度，車頭正中央為 0°，負值偏左，正值偏右，扇形排列)
         static constexpr float SENSOR_ANGLES[SENSOR_COUNT] = {
@@ -111,7 +73,7 @@ namespace Config {
     };
 
     // ==========================================
-    // 4. 追蹤與安全防撞距離設定 (後續演算法使用)
+    // 3. 追蹤與安全防撞距離設定
     // ==========================================
     struct TrackingParams {
         static constexpr float STOP_DISTANCE_CM     = 15.0f; // 緊急煞車距離 (低於此距離停止或後退)
