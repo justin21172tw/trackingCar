@@ -1,220 +1,163 @@
-# ESP32 智慧跟隨車 (Tracking Car)
+# ESP32 智慧跟隨車
 
-本專案為基於 **ESP32** 晶片開發之目標跟隨自走車。車體前方預計以擴充板連接 **八個超音波感測器**，透過依序輪詢測距的方式獲取目標機器人之方位角與相對距離，並透過雙輪差速馬達控制車身動態轉向並跟隨目標。
+本專案使用 ESP32、MCP23017、八個超音波感測器及雙輪差速馬達。每顆感測器的 Trig 由 MCP23017 個別輸出，Echo 則直接接回 ESP32 獨立 GPIO。程式依序觸發八顆感測器、接收 Echo 脈衝並換算距離。
 
----
+## 專案模組
 
-## 專案架構規劃 (三階段模組化設計)
-
-本專案採物件導向與模組化分層設計，規劃為三大核心模組：
-
-```
-trackingCar/
-├── platformio.ini              # PlatformIO 專案設定檔 (Arduino Framework)
-├── README.md                   # 專案說明與硬體接線手冊
-├── include/
-│   ├── Config.h                # 系統全域設定 (腳位、物理參數、多路超音波映射)
-│   ├── MCP23017.h              # [基礎] MCP23017 I2C 16-Bit I/O 擴充晶片驅動
-│   ├── MotorController.h       # [模組一] 馬達驅動與差速控制標頭檔
-│   ├── MotorTest.h             # [測試] 馬達自檢診斷
-│   ├── UltrasonicSensor.h      # [模組二] 單一超音波測距標頭檔
-│   ├── UltrasonicTest.h        # [測試] 單一超音波自檢診斷
-│   ├── UltrasonicArray.h       # [模組三] 8路超音波陣列抽象化標頭檔 (CD74HC4067 + MCP23017)
-│   ├── UltrasonicArrayTest.h   # [測試] 8路超音波陣列自檢與診斷
-│   └── UltrasonicHarnessTest.h # [測試] 總成線路單顆超音波檢測 (驗證整車線束與插槽)
-└── src/
-    ├── MCP23017.cpp            # MCP23017 I2C 實作
-    ├── MotorController.cpp     # [模組一] 馬達驅動控制實作
-    ├── UltrasonicSensor.cpp    # [模組二] 單一超音波測距實作
-    ├── UltrasonicArray.cpp     # [模組三] 8路超音波陣列測距抽象實作
-    └── main.cpp                # 測試與驗證主程式
+```text
+include/
+  Config.h              全域腳位、感測器方向與運作參數
+  MCP23017.h            MCP23017 I2C GPIO 驅動
+  MotorController.h     雙輪差速馬達控制
+  UltrasonicArray.h     八路超音波輪詢與距離量測
+  UltrasonicArrayTest.h 八路超音波順序輪詢及 Monitor 狀態輸出
+src/
+  Config.cpp            全域 constexpr 陣列定義
+  MCP23017.cpp          MCP23017 I2C GPIO 實作
+  MotorController.cpp   馬達控制實作
+  UltrasonicArray.cpp   Trig、Echo 脈衝量測及距離換算
+  main.cpp              初始化硬體並執行超音波測試模式
 ```
 
-| 模組編號 | 模組名稱 | 目前進度 | 功能描述 |
-| :--- | :--- | :---: | :--- |
-| **模組一** | **馬達操作邏輯 (MotorController)** | **完成** | 雙輪差速驅動、正反轉、差速轉向、原地旋轉、煞車制動、左右輪修偏校準。支援 2-Pin / 3-Pin 驅動晶片。 |
-| **模組二** | **單一超音波測距 (UltrasonicSensor)** | **完成** | 封裝 Trig/Echo 觸發測量、防卡死超時保護 (Timeout)、中位數突波濾波、方位角設定與量測快取。 |
-| **模組三** | **八路超音波測距抽象化 (UltrasonicArray)** | **完成** | 結合 CD74HC4067 (Echo MUX) 與 MCP23017 (Trig Expander)，抽象化「指定特定編號超音波進行一次測距」的底層時序與多工邏輯，支援任意非線性/動態輪詢。 |
-| **模組四** | **動態追蹤與 PID 閉迴路控制** | *待開發* | 依據最後偵測目標感測器展開動態局部輪詢、目標角度向量解算、雙輪差速 PID 跟隨控制。 |
+## 方向名稱
 
----
+以下左右均以車輛面向前方時的左右為準。感測器編號和接線依照這個順序固定對應：
 
-## 模組一：馬達操作邏輯 (`MotorController`)
+| 縮寫 | 方向 |
+|---|---|
+| F | 前方 |
+| FL | 前左 |
+| FR | 前右 |
+| LE | 左側 |
+| RI | 右側 |
+| R | 後方 |
+| RL | 後左 |
+| RR | 後右 |
 
-### 特色與設計亮點
-1. **直覺對應 4 接口驅動橋 (A1A, A1B, B1A, B1B)**：
-   - 專為 **L9110S**、**HG7881** 等 4 接口雙通道 H 橋模組優化，直驅雙路 PWM，精簡高效。
-2. **軟體方向反轉支援 (`setInvert`)**：
-   - 支援 `setInvert(invertA, invertB)`，若實體組裝時發現馬達轉向相反，可直接在程式中校正，免重新插拔線。
-3. **左右輪修偏校準 (`setTrim`)**：
-   - 可分別微調 Motor A / B 輸出比率 (0.0 ~ 2.0)，解決減速馬達製造公差導致的小車走偏問題。
-4. **安全主動煞車 (`brake`) 與滑行停止 (`stop`)**：
-   - 提供 H 橋雙端接 HIGH 的電氣短路制動 (`brake`) 與斷開輸出的滑行停止 (`stop`)。
+## 接線前準備與注意事項
 
-### 常用 API 列表
-```cpp
-// 初始化
-void init();
+1. ESP32、MCP23017、超音波感測器及馬達驅動器的 **GND 必須共地**。
+2. ESP32 GPIO 不可直接接收 5 V。若超音波模組以 5 V 供電，**每一條 Echo 線都要各自分壓**後再接 ESP32。
+3. 建議 MCP23017 使用 3.3 V 供電，使 I2C 上拉電位與 ESP32 相容。SDA/SCL 不可被上拉至 5 V。
+4. MCP23017 的 A0、A1、A2 接 GND 時，I2C 位址為 `0x20`；RESET 必須保持高電位。
+5. GPIO 34、35、36、39 僅能作為輸入，這份配置只將它們用於 Echo。
+6. 接線前請先斷開電源。MCP23017 封裝腳號以下以 28-pin 封裝為準；若使用模組板，請按板上的 `GPAx`、`SDA` 等標籤對照。
 
-// 直行與後退 (速度 0 ~ 255)
-void forward(uint8_t speed);
-void backward(uint8_t speed);
+## 八顆超音波感測器接線表
 
-// 差速轉向 (turnRatio 為內側輪速度係數，0.0~1.0)
-void turnLeft(uint8_t speed, float turnRatio = 0.4f);
-void turnRight(uint8_t speed, float turnRatio = 0.4f);
+每顆超音波模組通常有 `VCC`、`TRIG`、`ECHO`、`GND` 四個訊號。請按方向標記感測器，並依下表逐顆接線。
 
-// 原地旋轉 (左右輪反向運轉)
-void spinLeft(uint8_t speed);
-void spinRight(uint8_t speed);
+| 編號 | 方向 | 感測器 TRIG 接到 MCP23017 | MCP23017 封裝腳號 | 感測器 ECHO 經分壓後接到 ESP32 |
+|---:|---|---|---:|---:|
+| 0 | F | GPA0 | 21 | GPIO 26 |
+| 1 | FL | GPA1 | 22 | GPIO 27 |
+| 2 | FR | GPA2 | 23 | GPIO 32 |
+| 3 | LE | GPA3 | 24 | GPIO 33 |
+| 4 | RI | GPA4 | 25 | GPIO 34 |
+| 5 | R | GPA5 | 26 | GPIO 35 |
+| 6 | RL | GPA6 | 27 | GPIO 36 |
+| 7 | RR | GPA7 | 28 | GPIO 39 |
 
-// 停止與煞車
-void stop();  // 自然滑行
-void brake(); // 主動緊急煞車
+每顆感測器的電源線另外接：
 
-// 左右輪獨立控制 (-255 ~ 255)
-void drive(int leftSpeed, int rightSpeed);
+| 感測器接點 | 連接位置 |
+|---|---|
+| VCC | 感測器規格要求的電源；HC-SR04 通常接 5 V |
+| GND | 系統共地 |
+| TRIG | 對應表中的 MCP23017 GPA 輸出 |
+| ECHO | 經分壓後接對應的 ESP32 GPIO |
 
-// 微調係數設定
-void setTrim(float leftTrim, float rightTrim);
+### Echo 分壓接法範例
+
+對每一顆輸出 5 V Echo 的感測器，各使用一組電阻：
+
+```text
+感測器 ECHO ── 1 kΩ ──┬── ESP32 對應 Echo GPIO
+                       |
+                      2 kΩ
+                       |
+系統 GND ──────────────┴── ESP32 GND
 ```
 
----
+此接法將 5 V 降至約 3.3 V。八顆感測器需要八組分壓；不可把八條 Echo 合併，也不可讓 Echo 5 V 直接進入 ESP32。
 
-## 模組二：單一超音波測距 (`UltrasonicSensor`)
+## MCP23017 與 ESP32 接線表
 
-### 特色與設計亮點
-1. **非阻塞安全 Timeout 保護**：
-   - 傳統 `pulseIn` 若無指定超時會阻塞長達 1 秒。本模組會根據所設定的 `maxDistanceCm` 動態計算極限回波微秒數 (約 18ms)，超時立即中斷並返回 `-1.0f`，**確保後續 8 個超音波依序輪詢時絕不拖慢主迴圈**。
-2. **具備方位角度標籤 (`angleOffset`)**：
-   - 每個感測器實體皆可攜帶安裝方位角（如車頭 0°，側邊 ±45°、±90°），為第三模組的方向解算提供直接依據。
-3. **中位數濾波器 (`measureMedian`)**：
-   - 內建採樣中位數排序算法，有效濾除超音波在空氣中偶發的跳躍突波雜訊。
+若使用 28-pin MCP23017 晶片，依下表連接電源、I2C 和位址設定：
 
-### 常用 API 列表
-```cpp
-// 初始化腳位
-void init();
+| MCP23017 封裝腳號 | MCP23017 訊號 | 連接位置 |
+|---:|---|---|
+| 9 | VDD | ESP32 3V3 |
+| 10 | VSS / GND | 系統 GND |
+| 12 | SCL | ESP32 GPIO 22 |
+| 13 | SDA | ESP32 GPIO 21 |
+| 15 | A0 | GND |
+| 16 | A1 | GND |
+| 17 | A2 | GND |
+| 18 | RESET | 3V3；可用 10 kΩ 電阻上拉至 3V3 |
+| 21–28 | GPA0–GPA7 | 依上方感測器表連接各顆 TRIG |
+| 11、14 | NC | 不接 |
+| 19、20 | INTA、INTB | 本專案未使用，可不接 |
 
-// 單次快速測距 (公分，無反射返回 -1.0f)
-float measureDistance();
+SDA、SCL 需有上拉電阻至 **3.3 V**；若所用 MCP23017 模組板已內建上拉，確認上拉接至 3.3 V，不要再接到 5 V。
 
-// 多次採樣中位數測距 (消雜訊)
-float measureMedian(uint8_t samples = 3, uint8_t delayMs = 15);
+## ESP32 GPIO 一覽
 
-// 讀取快取值與屬性
-float getLastDistance() const;
-uint32_t getLastMeasureTime() const;
-bool isValid() const;
-uint8_t getId() const;
-float getAngleOffset() const;
+這張表列出本專案使用的 ESP32 腳位，可用來檢查接線是否有重複或接錯：
+
+| ESP32 GPIO | 方向 | 接到 |
+|---:|---|---|
+| 16 | 輸出 PWM | 馬達驅動器 B1A |
+| 17 | 輸出 PWM | 馬達驅動器 B1B |
+| 18 | 輸出 PWM | 馬達驅動器 A1A |
+| 19 | 輸出 PWM | 馬達驅動器 A1B |
+| 21 | 雙向 I2C 資料 | MCP23017 SDA（封裝腳 13） |
+| 22 | 輸出 I2C 時鐘 | MCP23017 SCL（封裝腳 12） |
+| 26 | 輸入 Echo | F 感測器 ECHO（分壓後） |
+| 27 | 輸入 Echo | FL 感測器 ECHO（分壓後） |
+| 32 | 輸入 Echo | FR 感測器 ECHO（分壓後） |
+| 33 | 輸入 Echo | LE 感測器 ECHO（分壓後） |
+| 34 | 輸入 Echo | RI 感測器 ECHO（分壓後） |
+| 35 | 輸入 Echo | R 感測器 ECHO（分壓後） |
+| 36 | 輸入 Echo | RL 感測器 ECHO（分壓後） |
+| 39 | 輸入 Echo | RR 感測器 ECHO（分壓後） |
+
+## 馬達驅動器接線
+
+Motor A 預設為左輪，Motor B 預設為右輪。以下是 ESP32 到雙 H 橋驅動器的控制線。GPIO 16/17 的設定適用於未將這兩腳保留給 PSRAM 的 ESP32 開發板；若使用 ESP32-WROVER，請先確認模組是否使用 GPIO 16/17 作為 PSRAM。
+
+| ESP32 GPIO | 馬達驅動器控制輸入 | 控制對象 |
+|---:|---|---|
+| 18 | A1A | 左輪 Motor A 輸入 A |
+| 19 | A1B | 左輪 Motor A 輸入 B |
+| 16 | B1A | 右輪 Motor B 輸入 A |
+| 17 | B1B | 右輪 Motor B 輸入 B |
+
+馬達接到驅動器的 A、B 馬達輸出端；馬達電源接驅動器規格允許的外部電源，不要由 ESP32 3V3 腳供電。馬達電源負極、驅動器 GND、ESP32 GND 必須相連。L9110S、HG7881 等模組的端子標示可能不同，請依模組上的 A/B 輸入與馬達輸出標籤確認。
+
+## 目前測試模式與 Monitor 訊息
+
+目前 `main.cpp` 只執行超音波測試，不執行目標跟隨或馬達動作。馬達控制器會初始化並保持停止。測試模組每輪依序輪詢感測器 0～7，也就是 F、FL、FR、LE、RI、R、RL、RR；每顆感測器開始量測及取得結果時都會輸出一筆 Monitor 訊息。
+
+Monitor 鮑率為 `115200`，訊息以易讀的英文狀態、方向、接線、距離與掃描摘要呈現，例如：
+
+```text
+ULTRASONIC ARRAY TEST: READY
+Sensors: 8 | Poll order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR
+MCP23017: I2C 0x20 | SDA: GPIO 21 | SCL: GPIO 22
+Minimum trigger interval: 60 ms | Motor: STOPPED
+
+--- Scan #1 started at 1234 ms | Order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR ---
+[1/8] F: Measuring...
+[1/8] F | Trig: MCP23017 GPA0 (pin 0) | Echo: ESP32 GPIO 26 | Status: VALID | Distance: 42.3 cm
+[2/8] FL | Trig: MCP23017 GPA1 (pin 1) | Echo: ESP32 GPIO 27 | Status: NO VALID READING | Reason: timeout or out of range
+--- Scan #1 complete | Valid: 7/8 | No valid reading: 1/8 | Duration: 480 ms | Motor: STOPPED ---
 ```
 
----
+每顆感測器都會列出方向、MCP23017 Trig 腳位、ESP32 Echo GPIO 和量測狀態；有效時顯示距離，無效時說明可能原因。每輪結束會列出有效數量、無效數量和耗時。相鄰 Trig 脈衝至少間隔 60 ms。
 
-## 模組三：八路超音波測距抽象化 (`UltrasonicArray`)
+若 MCP23017 初始化失敗，Monitor 會每 2 秒重複顯示目前 I2C 位址、SDA/SCL GPIO 和檢查建議；即使 Monitor 比開機晚開啟，也能看到目前狀態。
 
-### 晶片分工與硬體架構
-- **CD74HC4067 (16:1 類比多路複用器)**：負責切換 8 顆超音波的 **Echo** 訊號 (使用通道 C0~C7)。
-  - 原因：超音波測距依賴微秒級 (us) 的 `pulseIn()` 硬體計時。I2C 匯流排無法提供微秒級的實時訊號採樣；透過 CD74HC4067 類比開關，Echo 訊號直接以奈秒級延遲透傳至 ESP32 的單一硬體 GPIO（如 GPIO 34），兼具超高精確度與省腳位優點。
-- **MCP23017 (16-Bit I2C I/O 擴充晶片)**：負責發射 8 顆超音波的 **Trig** 脈衝。
-  - 8 個 Trig 腳位統一接在 MCP23017 的 GPA0~GPA7 (Pin 0~7)，完整使用 Port A，硬體配線更清晰單純。
-  - CD74HC4067 的 S0~S3 頻道選擇腳位亦可直接接在 MCP23017 的 GPB4~GPB7 (Pin 12~15)，使整個 8 路超音波陣列**僅耗用 ESP32 3 根腳位**（SDA、SCL、Echo）！亦支援設定為 ESP32 GPIO 直控 S0~S3。
+## 編譯與上傳
 
-### 核心抽象 API (`measureDistance`)
-本模組徹底抽象化「指定特定編號超音波進行一次測距」的底層時序與多工邏輯，**不強迫從 0~7 依序輪詢**，主程式可依據跟隨演算法自由決定呼叫順序：
-```cpp
-// 1. 初始化 (配置 I2C、MCP23017 與多工器頻道)
-bool init();
-
-// 2.【核心方法】指定特定超音波進行一次測距 (公分，超時或無回波返回 -1.0f)
-float measureDistance(uint8_t sensorIndex);
-
-// 3. 指定特定超音波進行多次採樣中位數濾波 (消除偶發環境突波)
-float measureMedian(uint8_t sensorIndex, uint8_t samples = 3, uint8_t delayMs = 12);
-
-// 4. 讀取快取值與感測器屬性
-float getLastDistance(uint8_t sensorIndex) const;
-uint32_t getLastMeasureTime(uint8_t sensorIndex) const;
-bool isValid(uint8_t sensorIndex) const;
-float getSensorAngle(uint8_t sensorIndex) const;
-uint8_t getSensorCount() const;
-```
-
-### 硬體接線對應表 (`Config.h` -> `UltrasonicArrayPins`)
-| 模組接口 | 晶片腳位 / 頻道 | ESP32 連接 | 備註 |
-| :--- | :--- | :--- | :--- |
-| **I2C SDA** | MCP23017 Pin 13 (SDA) | **GPIO 21** | 具備 4.7kΩ 上拉電阻 |
-| **I2C SCL** | MCP23017 Pin 12 (SCL) | **GPIO 4** | 避開 Motor B1A (GPIO 22) 衝突 |
-| **Echo 總線** | CD74HC4067 SIG (COM) | **GPIO 34** | 僅輸入腳位，安全抗干擾 |
-| **MUX S0~S3** | CD74HC4067 S0~S3 | **MCP23017 GPB4~GPB7** | (亦可切換為 ESP32 直控模式) |
-| **Trig 0 ~ 7**| Sensor 0~7 Trig | **MCP23017 GPA0~GPA7** | 8 個 Trig 觸發脈衝輸出 (Pin 0~7) |
-| **Echo 0 ~ 7**| Sensor 0~7 Echo | **CD74HC4067 C0~C7** | 8 路類比開關導通至 SIG 總線 |
-
----
-
-## 專屬測試模組：總成線路單顆超音波檢測 (`UltrasonicHarnessTest`)
-
-在組裝或焊接完小車之「線束總成」（包含 ESP32、I2C 匯流排、MCP23017、CD74HC4067 與 8 組超音波插座/插槽）後，若手邊**僅有一顆超音波感測器**，可使用本模組驗證整車總成線路是否導通正常。
-
-### 特色與設計亮點
-1. **單一插槽高速鎖定 (不延遲、不卡頓)**：
-   - 傳統多路輪詢會因其他 7 個未接孔位超時而導致嚴重卡頓。
-   - 本模式鎖定指定插槽（預設 #0），以 12~15Hz 頻率連續即時量測，每次循環僅耗時 2~15ms。
-2. **Serial 鍵盤動態切換插槽 (免重新編譯燒錄)**：
-   - 在 Serial Monitor 輸入數字 `0` ~ `7`，即可秒切鎖定之測試插槽。
-   - 方便拿著同一顆超音波，依序插入插槽 0、1、2...7 進行全車線路逐一驗證。
-3. **全插槽自動尋標巡檢模式 (`s` / `a`)**：
-   - 輸入 `s` 或 `a` 切換自動尋標，程式會快速掃描 8 個插槽。
-   - 當偵測到超音波插入任一插槽並測得回波時，自動顯示接線成功訊息並打勾標記合格。
-4. **總成檢驗清單 (Checklist, `c`)**：
-   - 輸入 `c` 隨時查看 8 組插槽的通關狀況與最後測距紀錄，當 8 組皆通過時跳出全數合格提示。
-5. **硬體與線路故障指引**：
-   - 自動檢測 I2C 與 MCP23017 連線，並檢測 GPIO 34 (Echo 總線) 靜態電位。
-   - 若特定插槽持續 TIMEOUT，自動輸出對應的 Trig (MCP GPAx) 與 Echo (CD74HC4067 Cx) 接線排錯指引。
-
-### 序列埠指令一覽
-| 鍵入指令 | 功能描述 |
-| :---: | :--- |
-| `0` ~ `7` | **立即切換並鎖定測試【插槽 #0 ~ #7】**（高刷新率即時測距） |
-| `s` 或 `a` | **切換【全插槽自動尋標巡檢模式】**（自動偵測有插上超音波的孔位） |
-| `c` | **印出【8組總成插槽檢驗清單】**（檢視各孔位通過狀態與進度百分比） |
-| `r` | **重設檢驗清單**（將全部插槽恢復為待測狀態） |
-| `h` 或 `?` | **顯示指令幫助說明選單** |
-
----
-
-## 硬體接線建議 (可於 `Config.h` 自訂修改)
-
-> **注意**：ESP32 的 `GPIO 6~11` 為連接內建 SPI Flash 專用，切勿使用；`GPIO 34, 35, 36, 39` 為 Input Only，僅可接 Echo，不可接 Trig 或馬達。
-
-### 1. 馬達驅動模組 (4 接口: A1A, A1B, B1A, B1B)
-適用 L9110S / HG7881 等 4-Wire H 橋驅動模組：
-| 模組接口標記 | 變數名稱 (`Config.h`) | 預設 ESP32 GPIO | 說明 |
-| :--- | :--- | :--- | :--- |
-| **A-1A (A1A)** | `PIN_A1A` | GPIO 18 | Motor A 控制端 A (PWM) |
-| **A-1B (A1B)** | `PIN_A1B` | GPIO 19 | Motor A 控制端 B (PWM) |
-| **B-1A (B1A)** | `PIN_B1A` | GPIO 22 | Motor B 控制端 A (PWM) |
-| **B-1B (B1B)** | `PIN_B1B` | GPIO 23 | Motor B 控制端 B (PWM) |
-
-> 提示：若實體組裝發現 Motor A 或 Motor B 旋轉方向相反，可直接在程式中呼叫 `motor.setInvert(invertA, invertB)`（例如 `motor.setInvert(true, false)`），毋須重新拔插接線。
-
-### 2. 測試超音波模組 (預設配置)
-| 訊號名稱 | ESP32 GPIO | 說明 |
-| :--- | :--- | :--- |
-| **TRIG_PIN** | GPIO 5 | 觸發訊號 (輸出) |
-| **ECHO_PIN** | GPIO 17 | 回波接收 (輸入，注意 HC-SR04 5V 模組建議分壓至 3.3V) |
-
----
-
-## 編譯與上傳方式
-
-### 方式 A：使用 VS Code + PlatformIO (推薦)
-1. 在 VS Code 開啟 `trackingCar` 資料夾。
-2. PlatformIO 會自動辨識 `platformio.ini`。
-3. 點選左下角「✓ (Build)」進行編譯，點選「→ (Upload)」燒錄至 ESP32。
-4. 開啟 Serial Monitor (鮑率 `115200`) 即可檢視即時測距與馬達動作輸出。
-
-### 方式 B：使用 Arduino IDE
-1. 將 `include/` 及 `src/` 中的檔案加入同一個專案資料夾。
-2. 選擇板子為 **ESP32 Dev Module**，鮑率設定 `115200`，直接點擊上傳。
+使用 VS Code + PlatformIO 開啟專案，執行 Build 與 Upload。Serial Monitor 鮑率為 `115200`，會輸出初始化狀態及每輪超音波測試結果。

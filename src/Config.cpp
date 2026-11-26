@@ -4,7 +4,7 @@ constexpr uint8_t Config::UltrasonicArrayPins::TRIG_MCP_PINS[
     Config::UltrasonicArrayPins::SENSOR_COUNT
 ];
 
-constexpr uint8_t Config::UltrasonicArrayPins::ECHO_MUX_CHANNELS[
+constexpr uint8_t Config::UltrasonicArrayPins::ECHO_GPIO_PINS[
     Config::UltrasonicArrayPins::SENSOR_COUNT
 ];
 

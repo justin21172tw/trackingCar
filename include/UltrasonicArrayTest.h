@@ -1,88 +1,107 @@
 #pragma once
 
 #include <Arduino.h>
+#include "Config.h"
 #include "UltrasonicArray.h"
-
-/**
- * ==============================================================================
- * Tracking Car - 多路超音波陣列自檢與診斷測試模組 (UltrasonicArrayTest.h)
- * ==============================================================================
- * 提供給開發者在組裝 CD74HC4067 & MCP23017 硬體時：
- * 1. 驗證 I2C 通訊與 MCP23017 連線狀態
- * 2. 測試「指定單一超音波測距」功能 (自訂 Index，不用全輪詢)
- * 3. 測試任意自訂輪詢序列 (動態輪詢驗證)
- * 4. 輸出視覺化距離條與方位角資訊至 Serial Monitor
- */
 
 namespace UltrasonicArrayTest {
 
-/**
- * @brief 輸出陣列啟動檢測提示
- */
-inline void printStartupPrompt(UltrasonicArray& array) {
-    Serial.println("\n==================================================");
-    Serial.println("[!] 進入【多路超音波陣列硬體診斷模式】");
-    Serial.printf ("[!] 晶片架構: CD74HC4067 (Echo MUX) + MCP23017 (Trig Expander)\n");
-    Serial.printf ("[!] 感測器總數: %d 顆 | I2C 位址: 0x%02X\n", 
-                   array.getSensorCount(), 
-                   Config::UltrasonicArrayPins::MCP_I2C_ADDR);
-    Serial.printf ("[!] MUX 控制方式: %s\n", 
-                   Config::UltrasonicArrayPins::MUX_CONTROL_VIA_MCP ? "MCP23017 GPB4~GPB7" : "ESP32 GPIO");
-    Serial.println("[!] 即將檢測指定超音波測距功能...");
-    Serial.println("==================================================\n");
+inline const char* getDirectionName(uint8_t sensorIndex) {
+    static const char* const directions[] = {
+        "F", "FL", "FR", "LE", "RI", "R", "RL", "RR"
+    };
+
+    if (sensorIndex >= Config::UltrasonicArrayPins::SENSOR_COUNT) {
+        return "UNKNOWN";
+    }
+    return directions[sensorIndex];
 }
 
-/**
- * @brief 測試指定單一超音波進行測距並輸出詳細數據
- * @param array 超音波陣列實例
- * @param sensorIndex 欲測試之感測器編號 (0 ~ sensorCount - 1)
- */
-inline void testSingleSensor(UltrasonicArray& array, uint8_t sensorIndex) {
-    float rawDist    = array.measureDistance(sensorIndex);
-    float medianDist = array.measureMedian(sensorIndex, 3, 10);
-    float angle      = array.getSensorAngle(sensorIndex);
-
-    char bar[25] = {0};
-    bar[0] = '[';
-    float displayDist = (medianDist > 0.0f) ? medianDist : rawDist;
-
-    if (displayDist > 0.0f) {
-        int barLen = (int)(displayDist / 10.0f);
-        if (barLen > 20) barLen = 20;
-        for (int i = 0; i < barLen; ++i) bar[i + 1] = '=';
-        for (int i = barLen; i < 20; ++i) bar[i + 1] = ' ';
-    } else {
-        for (int i = 0; i < 20; ++i) bar[i + 1] = ' ';
-    }
-    bar[21] = ']';
-    bar[22] = '\0';
-
-    if (displayDist > 0.0f) {
-        Serial.printf("[Sensor #%02d | %5.1f°] Raw: %5.1f cm | Median: %5.1f cm | %s\n",
-                      sensorIndex, angle, rawDist, medianDist, bar);
-    } else {
-        Serial.printf("[Sensor #%02d | %5.1f°] Raw:   ---   | Median:   ---   | [   OUT OF RANGE   ]\n",
-                      sensorIndex, angle);
-    }
+inline void printStartupStatus(const UltrasonicArray& array) {
+    Serial.println();
+    Serial.println("============================================================");
+    Serial.println("ULTRASONIC ARRAY TEST: READY");
+    Serial.printf(
+        "Sensors: %u | Poll order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR\n",
+        static_cast<unsigned>(array.getSensorCount())
+    );
+    Serial.printf(
+        "MCP23017: I2C 0x%02X | SDA: GPIO %d | SCL: GPIO %d\n",
+        static_cast<unsigned>(Config::UltrasonicArrayPins::MCP_I2C_ADDR),
+        Config::UltrasonicArrayPins::I2C_SDA_PIN,
+        Config::UltrasonicArrayPins::I2C_SCL_PIN
+    );
+    Serial.printf(
+        "Minimum trigger interval: %u ms | Motor: STOPPED\n",
+        static_cast<unsigned>(
+            Config::UltrasonicArrayPins::MIN_PING_INTERVAL_MS
+        )
+    );
+    Serial.println("============================================================");
 }
 
-/**
- * @brief 執行自訂序列輪詢診斷 (例如先測中央 4,5 再測兩側，非死板 0~9)
- * @param array 超音波陣列實例
- * @param sequence 欲測試之感測器編號陣列
- * @param seqLength 陣列長度
- * @param cycleDelayMs 每輪序列完成後延遲時間
- */
-inline void runCustomSequenceDiagnostic(UltrasonicArray& array, 
-                                        const uint8_t* sequence, 
-                                        uint8_t seqLength, 
-                                        uint32_t cycleDelayMs = 100) {
-    Serial.println("--------------------------------------------------------------------------------");
-    for (uint8_t i = 0; i < seqLength; ++i) {
-        uint8_t idx = sequence[i];
-        testSingleSensor(array, idx);
+inline void runPollingCycle(UltrasonicArray& array) {
+    static uint32_t scanNumber = 0;
+    ++scanNumber;
+    uint8_t validCount = 0;
+    const uint32_t scanStartMs = millis();
+
+    Serial.printf(
+        "\n--- Scan #%lu started at %lu ms | Order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR ---\n",
+        static_cast<unsigned long>(scanNumber),
+        static_cast<unsigned long>(scanStartMs)
+    );
+
+    for (uint8_t sensorIndex = 0;
+         sensorIndex < array.getSensorCount();
+         ++sensorIndex) {
+        const uint8_t trigPin =
+            Config::UltrasonicArrayPins::TRIG_MCP_PINS[sensorIndex];
+        const uint8_t echoPin = array.getEchoPin(sensorIndex);
+        const char* direction = getDirectionName(sensorIndex);
+
+        Serial.printf(
+            "[%u/%u] %s: Measuring...\n",
+            static_cast<unsigned>(sensorIndex + 1),
+            static_cast<unsigned>(array.getSensorCount()),
+            direction
+        );
+
+        const float distanceCm = array.measureDistance(sensorIndex);
+        if (distanceCm > 0.0f) {
+            ++validCount;
+            Serial.printf(
+                "[%u/%u] %s | Trig: MCP23017 GPA%u (pin %u) | Echo: ESP32 GPIO %u | Status: VALID | Distance: %.1f cm\n",
+                static_cast<unsigned>(sensorIndex + 1),
+                static_cast<unsigned>(array.getSensorCount()),
+                direction,
+                static_cast<unsigned>(trigPin),
+                static_cast<unsigned>(trigPin),
+                static_cast<unsigned>(echoPin),
+                distanceCm
+            );
+        } else {
+            Serial.printf(
+                "[%u/%u] %s | Trig: MCP23017 GPA%u (pin %u) | Echo: ESP32 GPIO %u | Status: NO VALID READING | Reason: timeout or out of range\n",
+                static_cast<unsigned>(sensorIndex + 1),
+                static_cast<unsigned>(array.getSensorCount()),
+                direction,
+                static_cast<unsigned>(trigPin),
+                static_cast<unsigned>(trigPin),
+                static_cast<unsigned>(echoPin)
+            );
+        }
     }
-    delay(cycleDelayMs);
+
+    Serial.printf(
+        "--- Scan #%lu complete | Valid: %u/%u | No valid reading: %u/%u | Duration: %lu ms | Motor: STOPPED ---\n",
+        static_cast<unsigned long>(scanNumber),
+        static_cast<unsigned>(validCount),
+        static_cast<unsigned>(array.getSensorCount()),
+        static_cast<unsigned>(array.getSensorCount() - validCount),
+        static_cast<unsigned>(array.getSensorCount()),
+        static_cast<unsigned long>(millis() - scanStartMs)
+    );
 }
 
-} // namespace UltrasonicArrayTest
+}
