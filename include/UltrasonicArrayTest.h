@@ -18,10 +18,26 @@ inline const char* getDirectionName(uint8_t sensorIndex) {
 }
 
 inline void printStartupStatus(const UltrasonicArray& array) {
+    Serial.println();
+    Serial.println("============================================================");
+    Serial.println("ULTRASONIC ARRAY TEST: READY");
     Serial.printf(
-        "event=test_ready level=info mode=ultrasonic_array_polling sensor_count=%u order=F,FL,FR,LE,RI,R,RL,RR motor=stopped\n",
+        "Sensors: %u | Poll order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR\n",
         static_cast<unsigned>(array.getSensorCount())
     );
+    Serial.printf(
+        "MCP23017: I2C 0x%02X | SDA: GPIO %d | SCL: GPIO %d\n",
+        static_cast<unsigned>(Config::UltrasonicArrayPins::MCP_I2C_ADDR),
+        Config::UltrasonicArrayPins::I2C_SDA_PIN,
+        Config::UltrasonicArrayPins::I2C_SCL_PIN
+    );
+    Serial.printf(
+        "Minimum trigger interval: %u ms | Motor: STOPPED\n",
+        static_cast<unsigned>(
+            Config::UltrasonicArrayPins::MIN_PING_INTERVAL_MS
+        )
+    );
+    Serial.println("============================================================");
 }
 
 inline void runPollingCycle(UltrasonicArray& array) {
@@ -31,9 +47,9 @@ inline void runPollingCycle(UltrasonicArray& array) {
     const uint32_t scanStartMs = millis();
 
     Serial.printf(
-        "event=scan_start level=info scan=%lu sensor_count=%u order=0_to_7\n",
+        "\n--- Scan #%lu started at %lu ms | Order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR ---\n",
         static_cast<unsigned long>(scanNumber),
-        static_cast<unsigned>(array.getSensorCount())
+        static_cast<unsigned long>(scanStartMs)
     );
 
     for (uint8_t sensorIndex = 0;
@@ -45,41 +61,45 @@ inline void runPollingCycle(UltrasonicArray& array) {
         const char* direction = getDirectionName(sensorIndex);
 
         Serial.printf(
-            "event=sensor_measurement level=info state=measuring scan=%lu sensor_index=%u direction=%s trig_mcp=GPA%u echo_gpio=%u\n",
-            static_cast<unsigned long>(scanNumber),
-            static_cast<unsigned>(sensorIndex),
-            direction,
-            static_cast<unsigned>(trigPin),
-            static_cast<unsigned>(echoPin)
+            "[%u/%u] %s: Measuring...\n",
+            static_cast<unsigned>(sensorIndex + 1),
+            static_cast<unsigned>(array.getSensorCount()),
+            direction
         );
 
         const float distanceCm = array.measureDistance(sensorIndex);
         if (distanceCm > 0.0f) {
             ++validCount;
             Serial.printf(
-                "event=sensor_measurement level=info state=valid scan=%lu sensor_index=%u direction=%s echo_gpio=%u distance_cm=%.1f\n",
-                static_cast<unsigned long>(scanNumber),
-                static_cast<unsigned>(sensorIndex),
+                "[%u/%u] %s | Trig: MCP23017 GPA%u (pin %u) | Echo: ESP32 GPIO %u | Status: VALID | Distance: %.1f cm\n",
+                static_cast<unsigned>(sensorIndex + 1),
+                static_cast<unsigned>(array.getSensorCount()),
                 direction,
+                static_cast<unsigned>(trigPin),
+                static_cast<unsigned>(trigPin),
                 static_cast<unsigned>(echoPin),
                 distanceCm
             );
         } else {
             Serial.printf(
-                "event=sensor_measurement level=warning state=no_valid_reading scan=%lu sensor_index=%u direction=%s echo_gpio=%u reason=timeout_or_out_of_range\n",
-                static_cast<unsigned long>(scanNumber),
-                static_cast<unsigned>(sensorIndex),
+                "[%u/%u] %s | Trig: MCP23017 GPA%u (pin %u) | Echo: ESP32 GPIO %u | Status: NO VALID READING | Reason: timeout or out of range\n",
+                static_cast<unsigned>(sensorIndex + 1),
+                static_cast<unsigned>(array.getSensorCount()),
                 direction,
+                static_cast<unsigned>(trigPin),
+                static_cast<unsigned>(trigPin),
                 static_cast<unsigned>(echoPin)
             );
         }
     }
 
     Serial.printf(
-        "event=scan_complete level=info scan=%lu valid_count=%u no_valid_count=%u elapsed_ms=%lu motor=stopped\n",
+        "--- Scan #%lu complete | Valid: %u/%u | No valid reading: %u/%u | Duration: %lu ms | Motor: STOPPED ---\n",
         static_cast<unsigned long>(scanNumber),
         static_cast<unsigned>(validCount),
+        static_cast<unsigned>(array.getSensorCount()),
         static_cast<unsigned>(array.getSensorCount() - validCount),
+        static_cast<unsigned>(array.getSensorCount()),
         static_cast<unsigned long>(millis() - scanStartMs)
     );
 }

@@ -139,20 +139,25 @@ Motor A 預設為左輪，Motor B 預設為右輪。以下是 ESP32 到雙 H 橋
 
 目前 `main.cpp` 只執行超音波測試，不執行目標跟隨或馬達動作。馬達控制器會初始化並保持停止。測試模組每輪依序輪詢感測器 0～7，也就是 F、FL、FR、LE、RI、R、RL、RR；每顆感測器開始量測及取得結果時都會輸出一筆 Monitor 訊息。
 
-Monitor 鮑率為 `115200`，訊息採固定欄位的 `key=value` 格式，例如：
+Monitor 鮑率為 `115200`，訊息以易讀的英文狀態、方向、接線、距離與掃描摘要呈現，例如：
 
 ```text
-event=scan_start level=info scan=1 sensor_count=8 order=0_to_7
-event=sensor_measurement level=info state=measuring scan=1 sensor_index=0 direction=F trig_mcp=GPA0 echo_gpio=26
-event=sensor_measurement level=info state=valid scan=1 sensor_index=0 direction=F echo_gpio=26 distance_cm=42.3
-event=sensor_measurement level=warning state=no_valid_reading scan=1 sensor_index=1 direction=FL echo_gpio=27 reason=timeout_or_out_of_range
-event=scan_complete level=info scan=1 valid_count=7 no_valid_count=1 elapsed_ms=...
+ULTRASONIC ARRAY TEST: READY
+Sensors: 8 | Poll order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR
+MCP23017: I2C 0x20 | SDA: GPIO 21 | SCL: GPIO 22
+Minimum trigger interval: 60 ms | Motor: STOPPED
+
+--- Scan #1 started at 1234 ms | Order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR ---
+[1/8] F: Measuring...
+[1/8] F | Trig: MCP23017 GPA0 (pin 0) | Echo: ESP32 GPIO 26 | Status: VALID | Distance: 42.3 cm
+[2/8] FL | Trig: MCP23017 GPA1 (pin 1) | Echo: ESP32 GPIO 27 | Status: NO VALID READING | Reason: timeout or out of range
+--- Scan #1 complete | Valid: 7/8 | No valid reading: 1/8 | Duration: 480 ms | Motor: STOPPED ---
 ```
 
-`state=measuring` 表示正在量測；`state=valid` 會附上距離；`state=no_valid_reading` 表示沒有有效距離，可能是逾時或超出量測範圍。每輪結束會列出有效與無效數量及耗時。相鄰 Trig 脈衝至少間隔 60 ms。
+每顆感測器都會列出方向、MCP23017 Trig 腳位、ESP32 Echo GPIO 和量測狀態；有效時顯示距離，無效時說明可能原因。每輪結束會列出有效數量、無效數量和耗時。相鄰 Trig 脈衝至少間隔 60 ms。
 
-若 MCP23017 初始化失敗，Monitor 會每 2 秒重複輸出 `event=test_wait`，指出目前使用的 I2C 位址、SDA/SCL GPIO 及檢查方向；即使 Monitor 比開機晚開啟，也能看到目前狀態。
+若 MCP23017 初始化失敗，Monitor 會每 2 秒重複顯示目前 I2C 位址、SDA/SCL GPIO 和檢查建議；即使 Monitor 比開機晚開啟，也能看到目前狀態。
 
 ## 編譯與上傳
 
-使用 VS Code + PlatformIO 開啟專案，執行 Build 與 Upload。Serial Monitor 鮑率為 `115200`，會輸出初始化狀態及每輪追蹤結果。
+使用 VS Code + PlatformIO 開啟專案，執行 Build 與 Upload。Serial Monitor 鮑率為 `115200`，會輸出初始化狀態及每輪超音波測試結果。
