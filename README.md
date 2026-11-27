@@ -148,15 +148,15 @@ Motor A 預設為左輪，Motor B 預設為右輪。以下是 ESP32 到雙 H 橋
 
 ## 基礎跟隨模式與 Monitor 訊息
 
-`main.cpp` 每輪依序輪詢感測器 0～7，也就是 F、FL、FR、LE、RI、R、RL、RR；每顆感測器開始量測及取得結果時都會輸出一筆 Monitor 訊息。控制器目前將 150 cm 內最近的有效回波視為目標，依該感測器角度轉向，並在距離不大於 20 cm 時停止。這是基礎跟隨功能，尚未實作木板／靜態障礙物排除，初次上電請架高車輪並留意馬達動作。
+`main.cpp` 每輪依序輪詢感測器 0～7，也就是 F、FL、FR、LE、RI、R、RL、RR；每顆感測器開始量測及取得結果時都會輸出一筆 Monitor 訊息。目標判斷會以每顆感測器的前次距離建立背景變化基準，只接受距離至少變化 5 cm、且相較其他感測器呈現局部變化的有效回波；連續累積兩次移動證據後才認定為移動目標。距離穩定的木板回波會逐步失去目標資格。控制器從合格目標中選最近者，依角度轉向，並在距離不大於 20 cm 時停止。此方法是以超音波時間變化排除靜態背景的啟發式演算法，無法保證排除所有牆面反射或車體自身移動造成的測距變化；初次上電請架高車輪並留意馬達動作。
 
 Monitor 鮑率為 `115200`，訊息以易讀的英文狀態、方向、接線、距離與掃描摘要呈現，例如：
 
 ```text
-ULTRASONIC ARRAY TEST: READY
+ULTRASONIC TARGET FOLLOWER: READY
 Sensors: 8 | Poll order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR
 MCP23017: I2C 0x20 | SDA: GPIO 21 | SCL: GPIO 22
-Minimum trigger interval: 60 ms | Motor: TARGET FOLLOWING ENABLED
+Minimum trigger interval: 60 ms | Motor: TARGET FOLLOWING ENABLED | Static return filtering: ENABLED
 
 --- Scan #1 started at 1234 ms | Order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR ---
 [1/8] F: Measuring...
@@ -199,7 +199,7 @@ Minimum trigger interval: 60 ms | Motor: TARGET FOLLOWING ENABLED
 
 ### 擴充方式
 
-網頁接收器只依賴版本化遙測 JSON；Web Serial 只負責讀取 USB 字串行。未來如新增 Bluetooth 或其他傳輸，應將傳輸內容轉成相同遙測記錄後交給共用解析流程，不需改寫圖表與診斷 UI。現有跟隨決策會填入 `logic` 欄位，並由馬達控制器執行差速轉向。
+網頁接收器只依賴版本化遙測 JSON；Web Serial 只負責讀取 USB 字串行。未來如新增 Bluetooth 或其他傳輸，應將傳輸內容轉成相同遙測記錄後交給共用解析流程，不需改寫圖表與診斷 UI。跟隨狀態、目標感測器、方位角與距離會填入 `logic` 欄位，供除錯網站檢視目標選擇與馬達控制狀態。
 
 ## 編譯與上傳
 

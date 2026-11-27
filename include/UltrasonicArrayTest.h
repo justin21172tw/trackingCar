@@ -23,7 +23,7 @@ inline const char* getDirectionName(uint8_t sensorIndex) {
 inline void printStartupStatus(const UltrasonicArray& array) {
     Serial.println();
     Serial.println("============================================================");
-    Serial.println("ULTRASONIC ARRAY TEST: READY");
+    Serial.println("ULTRASONIC TARGET FOLLOWER: READY");
     Serial.printf(
         "Sensors: %u | Poll order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR\n",
         static_cast<unsigned>(array.getSensorCount())
@@ -35,7 +35,7 @@ inline void printStartupStatus(const UltrasonicArray& array) {
         Config::UltrasonicArrayPins::I2C_SCL_PIN
     );
     Serial.printf(
-        "Minimum trigger interval: %u ms | Motor: TARGET FOLLOWING ENABLED\n",
+        "Minimum trigger interval: %u ms | Motor: TARGET FOLLOWING ENABLED | Static return filtering: ENABLED\n",
         static_cast<unsigned>(
             Config::UltrasonicArrayPins::MIN_PING_INTERVAL_MS
         )
@@ -136,7 +136,7 @@ inline void runPollingCycle(
 
     const uint32_t scanDurationMs = millis() - scanStartMs;
     const TargetSelector::Target target =
-        targetSelector.selectNearest(telemetrySensors, array.getSensorCount());
+        targetSelector.update(telemetrySensors, array.getSensorCount());
     const TargetFollower::State followerState = targetFollower.update(target);
 
     Serial.printf(

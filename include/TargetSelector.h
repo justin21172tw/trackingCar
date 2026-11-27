@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "Config.h"
 #include "StandardizedTelemetry.h"
 
 class TargetSelector {
@@ -12,8 +13,19 @@ public:
         float directionDeg;
     };
 
-    Target selectNearest(
+    TargetSelector();
+
+    Target update(
         const StandardizedTelemetry::Sensor* sensors,
         uint8_t sensorCount
-    ) const;
+    );
+
+private:
+    struct SensorHistory {
+        float distanceCm;
+        uint8_t motionScore;
+        bool hasPreviousReading;
+    };
+
+    SensorHistory _history[Config::UltrasonicArrayPins::SENSOR_COUNT];
 };

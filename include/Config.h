@@ -79,6 +79,8 @@ namespace Config {
         static constexpr float STOP_DISTANCE_CM     = 15.0f; // 緊急煞車距離 (低於此距離停止或後退)
         static constexpr float TARGET_DISTANCE_CM   = 20.0f; // 理想跟隨距離
         static constexpr float MAX_TRACK_DISTANCE_CM = 150.0f; // 超出此距離視為丟失目標
+        static constexpr float MIN_TARGET_MOVEMENT_CM = 5.0f; // 單次掃描的最小局部距離變化
+        static constexpr uint8_t TARGET_MOTION_SCORE_THRESHOLD = 2; // 連續移動證據門檻
     };
 
     // 序列埠鮑率
