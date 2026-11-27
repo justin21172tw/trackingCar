@@ -1,4 +1,5 @@
 #include "MotorController.h"
+#include "Config.h"
 
 MotorController::MotorController(int8_t pinA1A, int8_t pinA1B, int8_t pinB1A, int8_t pinB1B)
     : _pinA1A(pinA1A), _pinA1B(pinA1B),
@@ -39,7 +40,11 @@ void MotorController::setMotorA(int speed) {
         speed = -speed;
     }
 
-    int magnitude = constrain(abs(speed), 0, 255);
+    int magnitude = constrain(
+        abs(speed),
+        0,
+        static_cast<int>(Config::MotorParams::MAX_SPEED)
+    );
 
     if (speed > 0) {
         // Motor A 正轉: A1A 輸出 PWM, A1B 保持 LOW
@@ -61,7 +66,11 @@ void MotorController::setMotorB(int speed) {
         speed = -speed;
     }
 
-    int magnitude = constrain(abs(speed), 0, 255);
+    int magnitude = constrain(
+        abs(speed),
+        0,
+        static_cast<int>(Config::MotorParams::MAX_SPEED)
+    );
 
     if (speed > 0) {
         // Motor B 正轉: B1A 輸出 PWM, B1B 保持 LOW
@@ -83,8 +92,17 @@ void MotorController::drive(int speedA, int speedB) {
     speedB = constrain(speedB, -255, 255);
 
     // 套用修偏比例
-    int adjustedA = constrain((int)(speedA * _trimA), -255, 255);
-    int adjustedB = constrain((int)(speedB * _trimB), -255, 255);
+    const int maxSpeed = Config::MotorParams::MAX_SPEED;
+    int adjustedA = constrain(
+        static_cast<int>(speedA * _trimA),
+        -maxSpeed,
+        maxSpeed
+    );
+    int adjustedB = constrain(
+        static_cast<int>(speedB * _trimB),
+        -maxSpeed,
+        maxSpeed
+    );
 
     _currentSpeedA = adjustedA;
     _currentSpeedB = adjustedB;
