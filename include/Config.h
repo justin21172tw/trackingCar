@@ -61,10 +61,10 @@ namespace Config {
 
         static constexpr uint32_t MIN_PING_INTERVAL_MS = 60;
 
-        // 8 顆超音波方位角 (度，車頭正中央為 0°，負值偏左，正值偏右，扇形排列)
+        // 8 顆超音波方位角，依除錯網站上的安裝方向設定 (車頭前方為 0°)
         static constexpr float SENSOR_ANGLES[SENSOR_COUNT] = {
-            -70.0f, -50.0f, -30.0f, -10.0f,
-             10.0f,  30.0f,  50.0f,  70.0f
+               0.0f, -42.0f,  42.0f, -90.0f,
+              90.0f, 180.0f, -138.0f, 138.0f
         };
 
         // 陣列測距範圍參數
@@ -77,7 +77,7 @@ namespace Config {
     // ==========================================
     struct TrackingParams {
         static constexpr float STOP_DISTANCE_CM     = 15.0f; // 緊急煞車距離 (低於此距離停止或後退)
-        static constexpr float TARGET_DISTANCE_CM   = 30.0f; // 理想跟隨距離
+        static constexpr float TARGET_DISTANCE_CM   = 20.0f; // 理想跟隨距離
         static constexpr float MAX_TRACK_DISTANCE_CM = 150.0f; // 超出此距離視為丟失目標
     };
 

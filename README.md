@@ -9,6 +9,8 @@ include/
   Config.h              全域腳位、感測器方向與運作參數
   MCP23017.h            MCP23017 I2C GPIO 驅動
   MotorController.h     雙輪差速馬達控制
+  TargetSelector.h      從有效量測中選出最近目標及方向
+  TargetFollower.h      依目標角度與距離操控差速馬達
   StandardizedTelemetry.h  版本化逐行 JSON 遙測格式與輸出器
   UltrasonicArray.h     八路超音波輪詢與距離量測
   UltrasonicArrayTest.h 八路超音波順序輪詢及 Monitor 狀態輸出
@@ -16,8 +18,10 @@ src/
   Config.cpp            全域 constexpr 陣列定義
   MCP23017.cpp          MCP23017 I2C GPIO 實作
   MotorController.cpp   馬達控制實作
+  TargetSelector.cpp    最近有效超音波目標選擇
+  TargetFollower.cpp    目標跟隨及馬達轉向決策
   UltrasonicArray.cpp   Trig、Echo 脈衝量測及距離換算
-  main.cpp              初始化硬體並執行超音波測試模式
+  main.cpp              初始化感測器並執行超音波目標跟隨
 web/
   index.html            視覺化除錯介面
   styles.css            白底響應式介面樣式
@@ -38,6 +42,8 @@ web/
 | R | 後方 |
 | RL | 後左 |
 | RR | 後右 |
+
+超音波方位角依除錯網站 `web/app.js` 的安裝圖設定：F 0°、FL -42°、FR 42°、LE -90°、RI 90°、R 180°、RL -138°、RR 138°。正角度代表車輛右側，負角度代表左側。
 
 ## 接線前準備與注意事項
 
@@ -140,9 +146,9 @@ Motor A 預設為左輪，Motor B 預設為右輪。以下是 ESP32 到雙 H 橋
 
 馬達接到驅動器的 A、B 馬達輸出端；馬達電源接驅動器規格允許的外部電源，不要由 ESP32 3V3 腳供電。馬達電源負極、驅動器 GND、ESP32 GND 必須相連。L9110S、HG7881 等模組的端子標示可能不同，請依模組上的 A/B 輸入與馬達輸出標籤確認。
 
-## 目前測試模式與 Monitor 訊息
+## 基礎跟隨模式與 Monitor 訊息
 
-目前 `main.cpp` 只執行超音波測試，不執行目標跟隨或馬達動作。馬達控制器會初始化並保持停止。測試模組每輪依序輪詢感測器 0～7，也就是 F、FL、FR、LE、RI、R、RL、RR；每顆感測器開始量測及取得結果時都會輸出一筆 Monitor 訊息。
+`main.cpp` 每輪依序輪詢感測器 0～7，也就是 F、FL、FR、LE、RI、R、RL、RR；每顆感測器開始量測及取得結果時都會輸出一筆 Monitor 訊息。控制器目前將 150 cm 內最近的有效回波視為目標，依該感測器角度轉向，並在距離不大於 20 cm 時停止。這是基礎跟隨功能，尚未實作木板／靜態障礙物排除，初次上電請架高車輪並留意馬達動作。
 
 Monitor 鮑率為 `115200`，訊息以易讀的英文狀態、方向、接線、距離與掃描摘要呈現，例如：
 
@@ -150,13 +156,13 @@ Monitor 鮑率為 `115200`，訊息以易讀的英文狀態、方向、接線、
 ULTRASONIC ARRAY TEST: READY
 Sensors: 8 | Poll order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR
 MCP23017: I2C 0x20 | SDA: GPIO 21 | SCL: GPIO 22
-Minimum trigger interval: 60 ms | Motor: STOPPED
+Minimum trigger interval: 60 ms | Motor: TARGET FOLLOWING ENABLED
 
 --- Scan #1 started at 1234 ms | Order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR ---
 [1/8] F: Measuring...
 [1/8] F | Trig: MCP23017 GPA0 (pin 0) | Echo: ESP32 GPIO 26 | Status: VALID | Distance: 42.3 cm
 [2/8] FL | Trig: MCP23017 GPA1 (pin 1) | Echo: ESP32 GPIO 27 | Status: NO VALID READING | Reason: timeout or out of range
---- Scan #1 complete | Valid: 7/8 | No valid reading: 1/8 | Duration: 480 ms | Motor: STOPPED ---
+--- Scan #1 complete | Valid: 7/8 | No valid reading: 1/8 | Duration: 480 ms | Follow state: following | Target: S0 at 42.3 cm, 0.0 deg ---
 ```
 
 每顆感測器都會列出方向、MCP23017 Trig 腳位、ESP32 Echo GPIO 和量測狀態；有效時顯示距離，無效時說明可能原因。每輪結束會列出有效數量、無效數量和耗時。相鄰 Trig 脈衝至少間隔 60 ms。
@@ -170,10 +176,10 @@ Minimum trigger interval: 60 ms | Motor: STOPPED
 以下為協定格式範例，不是即時讀值。網頁不載入範例值，也不產生模擬資料。
 
 ```json
-@TELEMETRY {"v":1,"type":"scan","timestamp_ms":1234,"scan":1,"scan_duration_ms":480,"valid_count":7,"logic":{"state":null,"target_direction_deg":null},"sensors":[{"id":"S0","direction":"F","distance_cm":42.3,"status":"valid","reason":null},{"id":"S1","direction":"FL","distance_cm":null,"status":"timeout","reason":"timeout"},{"id":"S2","direction":"FR","distance_cm":33.1,"status":"valid","reason":null},{"id":"S3","direction":"LE","distance_cm":81.6,"status":"valid","reason":null},{"id":"S4","direction":"RI","distance_cm":25.0,"status":"valid","reason":null},{"id":"S5","direction":"R","distance_cm":120.4,"status":"valid","reason":null},{"id":"S6","direction":"RL","distance_cm":61.7,"status":"valid","reason":null},{"id":"S7","direction":"RR","distance_cm":95.2,"status":"valid","reason":null}]}
+@TELEMETRY {"v":1,"type":"scan","timestamp_ms":1234,"scan":1,"scan_duration_ms":480,"valid_count":7,"logic":{"state":"following","target_sensor_id":"S2","target_direction_deg":42.0,"target_distance_cm":33.1},"sensors":[{"id":"S0","direction":"F","distance_cm":42.3,"status":"valid","reason":null},{"id":"S1","direction":"FL","distance_cm":null,"status":"timeout","reason":"timeout"},{"id":"S2","direction":"FR","distance_cm":33.1,"status":"valid","reason":null},{"id":"S3","direction":"LE","distance_cm":81.6,"status":"valid","reason":null},{"id":"S4","direction":"RI","distance_cm":25.0,"status":"valid","reason":null},{"id":"S5","direction":"R","distance_cm":120.4,"status":"valid","reason":null},{"id":"S6","direction":"RL","distance_cm":61.7,"status":"valid","reason":null},{"id":"S7","direction":"RR","distance_cm":95.2,"status":"valid","reason":null}]}
 ```
 
-完整訊息每輪都會帶有 S0～S7 八筆資料。`distance_cm` 單位為公分；有效讀值時 `status` 為 `valid` 且 `reason` 為 `null`，未收到 Echo 時為 `timeout`，超出設定量程時為 `invalid` 並以 `reason: "out_of_range"` 說明。`logic.state` 與 `logic.target_direction_deg` 目前為 `null`，因現有程式只執行感測器測試，尚未提供跟隨決策結果。前綴、schema 版本及欄位順序固定，資料值則隨每輪量測更新。
+完整訊息每輪都會帶有 S0～S7 八筆資料。`distance_cm` 單位為公分；有效讀值時 `status` 為 `valid` 且 `reason` 為 `null`，未收到 Echo 時為 `timeout`，超出設定量程時為 `invalid` 並以 `reason: "out_of_range"` 說明。`logic` 會回報跟隨狀態、最近目標感測器、方位角與距離；未找到目標時目標欄位為 `null`。前綴、schema 版本及欄位順序固定，資料值則隨每輪量測更新。
 
 量測核心新增 `measureDetailed()` 供遙測區分逾時與超出量程；既有 `measureDistance()` 的有效距離／`-1.0f` 回傳行為維持不變。每輪仍依序測量 8 顆感測器，並維持相鄰觸發至少 60 ms；標準化資料在完整掃描後一次輸出，不額外延遲感測輪詢。
 
@@ -193,7 +199,7 @@ Minimum trigger interval: 60 ms | Motor: STOPPED
 
 ### 擴充方式
 
-網頁接收器只依賴版本化遙測 JSON；Web Serial 只負責讀取 USB 字串行。未來如新增 Bluetooth 或其他傳輸，應將傳輸內容轉成相同遙測記錄後交給共用解析流程，不需改寫圖表與診斷 UI。跟隨邏輯可在實際存在後填入 `logic` 欄位；本階段不新增馬達操作或控制行為。
+網頁接收器只依賴版本化遙測 JSON；Web Serial 只負責讀取 USB 字串行。未來如新增 Bluetooth 或其他傳輸，應將傳輸內容轉成相同遙測記錄後交給共用解析流程，不需改寫圖表與診斷 UI。現有跟隨決策會填入 `logic` 欄位，並由馬達控制器執行差速轉向。
 
 ## 編譯與上傳
 

@@ -367,7 +367,14 @@ function receiveTelemetry(record) {
   elements.scanRate.innerHTML = currentScanRateHz === null
     ? `— <small>Hz</small>`
     : `${currentScanRateHz.toFixed(1)} <small>Hz</small>`;
-  elements.logicState.textContent = record.logic?.state ?? "not provided";
+  const logic = record.logic;
+  const targetSummary = logic &&
+    typeof logic.target_sensor_id === "string" &&
+    Number.isFinite(logic.target_direction_deg) &&
+    Number.isFinite(logic.target_distance_cm)
+    ? ` · ${logic.target_sensor_id} · ${logic.target_direction_deg.toFixed(1)}° · ${logic.target_distance_cm.toFixed(1)} cm`
+    : "";
+  elements.logicState.textContent = `${logic?.state ?? "not provided"}${targetSummary}`;
   setConnection("serial", "USB receiving telemetry");
   setMessage(
     `Scan ${record.scan} received from USB serial.${diagnosticsCount ? ` ${diagnosticsCount} malformed record(s) ignored.` : ""}`,

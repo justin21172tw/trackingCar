@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include "Config.h"
 #include "MotorController.h"
+#include "TargetFollower.h"
+#include "TargetSelector.h"
 #include "UltrasonicArray.h"
 #include "UltrasonicArrayTest.h"
 
@@ -13,6 +15,8 @@ MotorController motor(
     Config::MotorPins::PIN_B1B
 );
 UltrasonicArray ultrasonicArray;
+TargetSelector targetSelector;
+TargetFollower targetFollower(motor);
 bool ultrasonicArrayReady = false;
 uint32_t lastInitializationStatusMs = 0;
 
@@ -23,8 +27,8 @@ void setup() {
     delay(500);
     Serial.println();
     Serial.println("============================================================");
-    Serial.println("ESP32 TRACKING CAR | ULTRASONIC ARRAY TEST");
-    Serial.println("Mode: Sensor polling only | Motor action: DISABLED");
+    Serial.println("ESP32 TRACKING CAR | ULTRASONIC TARGET FOLLOWING");
+    Serial.println("Mode: Nearest valid sensor target | Wall filtering: NOT IMPLEMENTED");
     Serial.println("============================================================");
 
     motor.init();
@@ -65,5 +69,9 @@ void loop() {
         return;
     }
 
-    UltrasonicArrayTest::runPollingCycle(ultrasonicArray);
+    UltrasonicArrayTest::runPollingCycle(
+        ultrasonicArray,
+        targetSelector,
+        targetFollower
+    );
 }
