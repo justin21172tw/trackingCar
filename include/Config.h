@@ -30,11 +30,22 @@ namespace Config {
 
     // 馬達運作參數
     struct MotorParams {
-        static constexpr uint8_t DEFAULT_SPEED = 180;   // 預設前進速度 (0 ~ 255)
+        static constexpr float MOTOR_RATED_VOLTAGE_V = 6.0f;
+        static constexpr float MOTOR_SUPPLY_VOLTAGE_V = 9.0f;
+        static constexpr uint8_t DEFAULT_SPEED = 200;   // 預設前進速度 (0 ~ 255)
         static constexpr uint8_t MIN_SPEED     = 60;    // 克服摩擦力的最小啟動速度
-        static constexpr uint8_t MAX_SPEED     = 255;   // 最高速度
+        static constexpr uint8_t RATED_MAX_SPEED = static_cast<uint8_t>(
+            255.0f * MOTOR_RATED_VOLTAGE_V / MOTOR_SUPPLY_VOLTAGE_V
+        ); // 對應馬達額定電壓的持續 PWM 參考上限 (170)
+        static constexpr uint8_t MAX_SPEED = 255;       // 短脈衝轉向時外輪允許的峰值 PWM 上限
         static constexpr float   DEFAULT_TRIM_LEFT  = 1.0f; // 左輪微調修正係數
         static constexpr float   DEFAULT_TRIM_RIGHT = 1.0f; // 右輪微調修正係數
+    };
+
+    struct BluetoothParams {
+        static constexpr char DEVICE_NAME[] = "TrackingCar";
+        static constexpr char SERVICE_UUID[] = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+        static constexpr char TX_CHARACTERISTIC_UUID[] = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
     };
 
     // ==========================================
@@ -59,12 +70,12 @@ namespace Config {
             26, 27, 32, 33, 34, 35, 36, 39
         };
 
-        static constexpr uint32_t MIN_PING_INTERVAL_MS = 60;
+        static constexpr uint32_t MIN_PING_INTERVAL_MS = 50;
 
-        // 8 顆超音波方位角 (度，車頭正中央為 0°，負值偏左，正值偏右，扇形排列)
+        // 8 顆超音波方位角，依除錯網站上的安裝方向設定 (車頭前方為 0°)
         static constexpr float SENSOR_ANGLES[SENSOR_COUNT] = {
-            -70.0f, -50.0f, -30.0f, -10.0f,
-             10.0f,  30.0f,  50.0f,  70.0f
+               0.0f, -42.0f,  42.0f, -90.0f,
+              90.0f, 180.0f, -138.0f, 138.0f
         };
 
         // 陣列測距範圍參數
@@ -76,9 +87,11 @@ namespace Config {
     // 3. 追蹤與安全防撞距離設定
     // ==========================================
     struct TrackingParams {
-        static constexpr float STOP_DISTANCE_CM     = 15.0f; // 緊急煞車距離 (低於此距離停止或後退)
-        static constexpr float TARGET_DISTANCE_CM   = 30.0f; // 理想跟隨距離
+        static constexpr float STOP_DISTANCE_CM     = 15.0f; // 跟車目標距離門檻 (小於此值時往相對方向退開)
+        static constexpr float TARGET_DISTANCE_CM   = 15.0f; // 理想跟隨距離
+        static constexpr float TARGET_DEADBAND_CM   = 2.0f;  // 跟車距離緩衝帶 (15~17 cm 內停止避免抖動)
         static constexpr float MAX_TRACK_DISTANCE_CM = 150.0f; // 超出此距離視為丟失目標
+        static constexpr float CLOSE_RETREAT_SPEED_RATIO = 0.5f; // 目標過近時退開的速度比例
     };
 
     // 序列埠鮑率

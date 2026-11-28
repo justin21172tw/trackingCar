@@ -43,8 +43,8 @@ public:
 
     /**
      * @brief 直接設定 Motor A 與 Motor B 速度
-     * @param speedA 馬達 A 速度 (-255 ~ 255，正值前進，負值後退，0 停止)
-     * @param speedB 馬達 B 速度 (-255 ~ 255，正值前進，負值後退，0 停止)
+     * @param speedA 馬達 A 請求速度 (-255 ~ 255，正值前進，負值後退，0 停止；實際輸出受 MAX_SPEED 限制)
+     * @param speedB 馬達 B 請求速度 (-255 ~ 255，正值前進，負值後退，0 停止；實際輸出受 MAX_SPEED 限制)
      */
     void drive(int speedA, int speedB);
 
@@ -75,6 +75,20 @@ public:
     void turnRight(uint8_t speed, float turnRatio = 0.4f);
 
     /**
+     * @brief 差速左後退 (雙輪後退，Motor A [左輪] 降速使車尾轉向左後方)
+     * @param speed 基礎速度 (0 ~ 255)
+     * @param turnRatio 內側輪 (Motor A) 速度比例 (0.0: 內側輪停止, 1.0: 等速後退)
+     */
+    void backwardLeft(uint8_t speed, float turnRatio = 0.4f);
+
+    /**
+     * @brief 差速右後退 (雙輪後退，Motor B [右輪] 降速使車尾轉向右後方)
+     * @param speed 基礎速度 (0 ~ 255)
+     * @param turnRatio 內側輪 (Motor B) 速度比例 (0.0: 內側輪停止, 1.0: 等速後退)
+     */
+    void backwardRight(uint8_t speed, float turnRatio = 0.4f);
+
+    /**
      * @brief 原地原地左旋 (Motor A 後退，Motor B 前進)
      * @param speed 旋轉速度 (0 ~ 255)
      */
@@ -97,12 +111,12 @@ public:
     void brake();
 
     /**
-     * @brief 取得當前 Motor A 輸出速度 (-255 ~ 255)
+     * @brief 取得當前 Motor A PWM 輸出命令 (受 Config::MotorParams::MAX_SPEED 限制)
      */
     int getSpeedA() const { return _currentSpeedA; }
 
     /**
-     * @brief 取得當前 Motor B 輸出速度 (-255 ~ 255)
+     * @brief 取得當前 Motor B PWM 輸出命令 (受 Config::MotorParams::MAX_SPEED 限制)
      */
     int getSpeedB() const { return _currentSpeedB; }
 

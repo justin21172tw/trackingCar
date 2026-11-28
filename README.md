@@ -9,19 +9,25 @@ include/
   Config.h              全域腳位、感測器方向與運作參數
   MCP23017.h            MCP23017 I2C GPIO 驅動
   MotorController.h     雙輪差速馬達控制
+  TargetSelector.h      從有效量測中選出最近回波及方向
+  TargetFollower.h      依目標角度與距離操控差速馬達
   StandardizedTelemetry.h  版本化逐行 JSON 遙測格式與輸出器
+  BluetoothTelemetry.h BLE GATT 遙測傳輸與分包
   UltrasonicArray.h     八路超音波輪詢與距離量測
   UltrasonicArrayTest.h 八路超音波順序輪詢及 Monitor 狀態輸出
 src/
   Config.cpp            全域 constexpr 陣列定義
+  BluetoothTelemetry.cpp BLE UART GATT 服務與通知傳送
   MCP23017.cpp          MCP23017 I2C GPIO 實作
   MotorController.cpp   馬達控制實作
+  TargetSelector.cpp    最近有效超音波目標選擇
+  TargetFollower.cpp    目標跟隨及馬達轉向決策
   UltrasonicArray.cpp   Trig、Echo 脈衝量測及距離換算
-  main.cpp              初始化硬體並執行超音波測試模式
+  main.cpp              初始化感測器並執行超音波目標跟隨
 web/
   index.html            視覺化除錯介面
   styles.css            白底響應式介面樣式
-  app.js                USB Web Serial、真實遙測與感測器圖表
+  app.js                USB Web Serial、Web Bluetooth、真實遙測與感測器圖表
 ```
 
 ## 方向名稱
@@ -38,6 +44,8 @@ web/
 | R | 後方 |
 | RL | 後左 |
 | RR | 後右 |
+
+超音波方位角依除錯網站 `web/app.js` 的安裝圖設定：F 0°、FL -42°、FR 42°、LE -90°、RI 90°、R 180°、RL -138°、RR 138°。正角度代表車輛右側，負角度代表左側。
 
 ## 接線前準備與注意事項
 
@@ -140,23 +148,37 @@ Motor A 預設為左輪，Motor B 預設為右輪。以下是 ESP32 到雙 H 橋
 
 馬達接到驅動器的 A、B 馬達輸出端；馬達電源接驅動器規格允許的外部電源，不要由 ESP32 3V3 腳供電。馬達電源負極、驅動器 GND、ESP32 GND 必須相連。L9110S、HG7881 等模組的端子標示可能不同，請依模組上的 A/B 輸入與馬達輸出標籤確認。
 
-## 目前測試模式與 Monitor 訊息
+目前馬達額定電壓設為 6 V、驅動器供電設為 9 V，`Config::MotorParams::RATED_MAX_SPEED` 依兩者比例算得持續運轉參考上限約 `255 × 6 / 9 = 170`（用於直行 `136` 與原地回轉 `170`）；為了在 1 kg 車重與 180 ms 短脈衝下提供足夠的外輪轉向扭力，`MAX_SPEED` 設為 `255`，讓斜方向差速轉彎時外側輪可輸出至 `255`、內側輪維持 `114`（高於負載啟動門檻）。這是 PWM 占空比控制，並非穩壓器：馬達仍會在 PWM 導通期間承受驅動器電源電壓；若需要硬體上確保馬達端電壓不超過 6 V，應使用降壓電源或合適的馬達電源，而不要只依賴軟體限速。
 
-目前 `main.cpp` 只執行超音波測試，不執行目標跟隨或馬達動作。馬達控制器會初始化並保持停止。測試模組每輪依序輪詢感測器 0～7，也就是 F、FL、FR、LE、RI、R、RL、RR；每顆感測器開始量測及取得結果時都會輸出一筆 Monitor 訊息。
+## 基礎跟隨模式與 Monitor 訊息
+
+`main.cpp` 每輪依序輪詢感測器 0～7，也就是 F、FL、FR、LE、RI、R、RL、RR；每顆感測器開始量測及取得結果時都會輸出一筆 Monitor 訊息。目前為了測試超音波與馬達連動，牆面／移動目標判別暫停：每輪只從狀態為 `Valid` 且距離不超過 150 cm 的感測器中選最近者。
+
+**車頭或車尾對正優先控制邏輯：**
+
+| 目標方位 | 偏差（前/後端對目標夾角） | 動作 |
+|---|---|---|
+| 任意方位 | ≥ 40°（`ALIGN_THRESHOLD_DEG`） | 原地旋轉對正（車頭對正同向旋轉；車尾對正反向旋轉） |
+| 前半圓（\|angle\| ≤ 90°），偏差 < 40° | — | 車頭朝目標前進，差速微調 |
+| 後半圓（\|angle\| > 90°），偏差 < 40° | — | 車尾朝目標後退，差速微調 |
+
+跟車距離設為 15 cm，目標距離在 15～17 cm 內停止；小於 15 cm 且已對正時沿對正軸退開（車頭朝目標則後退，車尾朝目標則前進）；若尚未對正則優先旋轉對正再退開。固定物（包含牆面或木板）也可能被當成目標；沒有有效目標時停止。初次上電請架高車輪並留意馬達動作。
+
+對正門檻 `ALIGN_THRESHOLD_DEG`（預設 40°）可在 `src/TargetFollower.cpp` 頂部調整，建議範圍 20°～45°：值越小對正越嚴格、旋轉機會越多；值越大越快切換行駛、接近角度略寬。
 
 Monitor 鮑率為 `115200`，訊息以易讀的英文狀態、方向、接線、距離與掃描摘要呈現，例如：
 
 ```text
-ULTRASONIC ARRAY TEST: READY
+ULTRASONIC TARGET FOLLOWER: READY
 Sensors: 8 | Poll order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR
 MCP23017: I2C 0x20 | SDA: GPIO 21 | SCL: GPIO 22
-Minimum trigger interval: 60 ms | Motor: STOPPED
+Minimum trigger interval: 60 ms | Motor: TARGET FOLLOWING ENABLED | Wall filtering: PAUSED (fixed objects may be targets)
 
 --- Scan #1 started at 1234 ms | Order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR ---
 [1/8] F: Measuring...
 [1/8] F | Trig: MCP23017 GPA0 (pin 0) | Echo: ESP32 GPIO 26 | Status: VALID | Distance: 42.3 cm
 [2/8] FL | Trig: MCP23017 GPA1 (pin 1) | Echo: ESP32 GPIO 27 | Status: NO VALID READING | Reason: timeout or out of range
---- Scan #1 complete | Valid: 7/8 | No valid reading: 1/8 | Duration: 480 ms | Motor: STOPPED ---
+--- Scan #1 complete | Valid: 7/8 | No valid reading: 1/8 | Duration: 480 ms | Follow state: following | Wall filtering: PAUSED | Target: S0 at 42.3 cm, 0.0 deg ---
 ```
 
 每顆感測器都會列出方向、MCP23017 Trig 腳位、ESP32 Echo GPIO 和量測狀態；有效時顯示距離，無效時說明可能原因。每輪結束會列出有效數量、無效數量和耗時。相鄰 Trig 脈衝至少間隔 60 ms。
@@ -165,15 +187,15 @@ Minimum trigger interval: 60 ms | Motor: STOPPED
 
 ## 視覺化除錯介面
 
-韌體每完成一輪八顆感測器掃描，會在既有易讀文字訊息後額外輸出一行以 `@TELEMETRY ` 開頭的 JSON。解析器只需讀取此固定前綴的行，其他 `Serial` 訊息可直接忽略；資料結構與輸出器使用 Arduino `Print` 介面，USB 序列埠與未來的其他傳輸層可共用相同格式。此階段不包含 Bluetooth 傳輸。
+韌體每完成一輪八顆感測器掃描，會將同一行以 `@TELEMETRY ` 開頭的 JSON 同時輸出至 USB Serial 和 BLE GATT 通知。兩種傳輸使用相同 schema 和前綴；BLE 使用 Nordic UART Service 相容的唯讀 TX characteristic，預設以 20-byte notification 分包，網頁依換行重新組回完整 JSON。Bluetooth service UUID 為 `6e400001-b5a3-f393-e0a9-e50e24dcca9e`，TX characteristic UUID 為 `6e400003-b5a3-f393-e0a9-e50e24dcca9e`。
 
 以下為協定格式範例，不是即時讀值。網頁不載入範例值，也不產生模擬資料。
 
 ```json
-@TELEMETRY {"v":1,"type":"scan","timestamp_ms":1234,"scan":1,"scan_duration_ms":480,"valid_count":7,"logic":{"state":null,"target_direction_deg":null},"sensors":[{"id":"S0","direction":"F","distance_cm":42.3,"status":"valid","reason":null},{"id":"S1","direction":"FL","distance_cm":null,"status":"timeout","reason":"timeout"},{"id":"S2","direction":"FR","distance_cm":33.1,"status":"valid","reason":null},{"id":"S3","direction":"LE","distance_cm":81.6,"status":"valid","reason":null},{"id":"S4","direction":"RI","distance_cm":25.0,"status":"valid","reason":null},{"id":"S5","direction":"R","distance_cm":120.4,"status":"valid","reason":null},{"id":"S6","direction":"RL","distance_cm":61.7,"status":"valid","reason":null},{"id":"S7","direction":"RR","distance_cm":95.2,"status":"valid","reason":null}]}
+@TELEMETRY {"v":1,"type":"scan","timestamp_ms":1234,"scan":1,"scan_duration_ms":480,"valid_count":7,"logic":{"state":"following","target_sensor_id":"S2","target_direction_deg":42.0,"target_distance_cm":33.1},"sensors":[{"id":"S0","direction":"F","distance_cm":42.3,"status":"valid","reason":null},{"id":"S1","direction":"FL","distance_cm":null,"status":"timeout","reason":"timeout"},{"id":"S2","direction":"FR","distance_cm":33.1,"status":"valid","reason":null},{"id":"S3","direction":"LE","distance_cm":81.6,"status":"valid","reason":null},{"id":"S4","direction":"RI","distance_cm":25.0,"status":"valid","reason":null},{"id":"S5","direction":"R","distance_cm":120.4,"status":"valid","reason":null},{"id":"S6","direction":"RL","distance_cm":61.7,"status":"valid","reason":null},{"id":"S7","direction":"RR","distance_cm":95.2,"status":"valid","reason":null}]}
 ```
 
-完整訊息每輪都會帶有 S0～S7 八筆資料。`distance_cm` 單位為公分；有效讀值時 `status` 為 `valid` 且 `reason` 為 `null`，未收到 Echo 時為 `timeout`，超出設定量程時為 `invalid` 並以 `reason: "out_of_range"` 說明。`logic.state` 與 `logic.target_direction_deg` 目前為 `null`，因現有程式只執行感測器測試，尚未提供跟隨決策結果。前綴、schema 版本及欄位順序固定，資料值則隨每輪量測更新。
+完整訊息每輪都會帶有 S0～S7 八筆資料。`distance_cm` 單位為公分；有效讀值時 `status` 為 `valid` 且 `reason` 為 `null`，未收到 Echo 時為 `timeout`，超出設定量程時為 `invalid` 並以 `reason: "out_of_range"` 說明。`logic` 會回報跟隨狀態、最近目標感測器、方位角與距離；未找到目標時目標欄位為 `null`。前綴、schema 版本及欄位順序固定，資料值則隨每輪量測更新。
 
 量測核心新增 `measureDetailed()` 供遙測區分逾時與超出量程；既有 `measureDistance()` 的有效距離／`-1.0f` 回傳行為維持不變。每輪仍依序測量 8 顆感測器，並維持相鄰觸發至少 60 ms；標準化資料在完整掃描後一次輸出，不額外延遲感測輪詢。
 
@@ -186,14 +208,15 @@ Minimum trigger interval: 60 ms | Motor: STOPPED
    ```
 
 2. 瀏覽 `http://localhost:8000`。未連接車輛時，介面顯示「No vehicle connected」，感測器讀值、圖表及掃描統計維持無資料；不會生成或顯示模擬值。直接開啟 `file://` 頁面不保證能使用 Web Serial；Web Serial 需要支援的瀏覽器及安全來源（localhost 或 HTTPS）。
-3. 接上 ESP32 後按 **Connect USB** 並選擇序列埠。介面以 `115200` 鮑率讀取 USB，只處理 `@TELEMETRY ` 行；連線開啟後，在收到第一筆有效遙測前仍顯示無資料。頁面上的 USB diagnostics 會顯示瀏覽器實際收到的 bytes／lines、帶遙測前綴的行數、接受／拒絕筆數、最近一行原文及 USB VID/PID。Web Serial 不提供作業系統 COM 編號；若 bytes 為 0，請先確認所選 VID/PID 對應到開發板，並關閉 PlatformIO Serial Monitor 等占用同一序列埠的程式。
-4. 收到韌體實際輸出的遙測後，才會更新距離、頻率、狀態與圖表。點選車體上的感測器或下方卡片可查看詳情；每顆圖表只保留最近 3 秒資料，無效讀值會形成曲線斷點，不會被畫成 0 cm。USB 中斷或手動斷線時會清除已顯示的讀值，避免將舊資料誤認為即時資料；連線中超過 2.5 秒未更新則標記為 stale。
+3. 要使用 USB，接上 ESP32 後按 **Connect USB** 並選擇序列埠。介面以 `115200` 鮑率讀取 USB，只處理 `@TELEMETRY ` 行。USB diagnostics 會顯示 bytes／lines、接受／拒絕筆數及最近一行原文。Web Serial 不提供作業系統 COM 編號；若 bytes 為 0，請確認所選裝置並關閉占用同一序列埠的 Serial Monitor。
+4. 要使用無線連線，按 **Connect Bluetooth**，在系統選擇器選擇 `TrackingCar` 並允許連線。電腦需要 Bluetooth LE，瀏覽器需為支援 Web Bluetooth 的 Chrome 或 Edge，且頁面必須從 localhost 或 HTTPS 開啟。Bluetooth diagnostics 會顯示通知數、bytes、完整行及遙測接受／拒絕數。韌體可同時輸出 USB 與 BLE，但除錯網頁一次啟用一種接收來源；切換前請先中斷目前連線。此功能是 BLE GATT，不是傳統 Bluetooth SPP。
+5. 收到韌體實際輸出的遙測後，才會更新距離、頻率、狀態與圖表。點選車體上的感測器或下方卡片可查看詳情；每顆圖表只保留最近 3 秒資料，無效讀值會形成曲線斷點，不會被畫成 0 cm。USB 或 BLE 中斷時會清除已顯示的讀值，避免將舊資料誤認為即時資料；連線中超過 2.5 秒未更新則標記為 stale。
 
 跳動診斷依最近有效樣本的變化幅度判定；「Possible freeze」代表最近至少 2 秒讀值相同，是供除錯參考的啟發式提示，不等於硬體故障判定。感測器位置及車體輪廓是依韌體 F、FL、FR、LE、RI、R、RL、RR 順序固定的前端示意，可在 `web/app.js` 的 `SENSOR_CONFIGS` 調整座標與角度。
 
 ### 擴充方式
 
-網頁接收器只依賴版本化遙測 JSON；Web Serial 只負責讀取 USB 字串行。未來如新增 Bluetooth 或其他傳輸，應將傳輸內容轉成相同遙測記錄後交給共用解析流程，不需改寫圖表與診斷 UI。跟隨邏輯可在實際存在後填入 `logic` 欄位；本階段不新增馬達操作或控制行為。
+網頁接收器只依賴版本化遙測 JSON；Web Serial 與 Web Bluetooth 只負責取得文字資料並交給共用的行解析及驗證流程，不需分別實作圖表。跟隨狀態、目標感測器、方位角與距離會填入 `logic` 欄位，供除錯網站檢視目標選擇與馬達控制狀態。
 
 ## 編譯與上傳
 

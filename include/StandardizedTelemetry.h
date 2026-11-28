@@ -28,11 +28,20 @@ struct Sensor {
     SensorReason reason;
 };
 
+struct Logic {
+    const char* state;
+    bool hasTarget;
+    uint8_t targetSensorIndex;
+    float targetDirectionDeg;
+    float targetDistanceCm;
+};
+
 struct Scan {
     uint32_t timestampMs;
     uint32_t scanNumber;
     uint32_t durationMs;
     uint8_t validCount;
+    Logic logic;
     uint8_t sensorCount;
     const Sensor* sensors;
 };
@@ -75,7 +84,29 @@ inline void writeLine(Print& output, const Scan& scan) {
     output.print(static_cast<unsigned long>(scan.durationMs));
     output.print(",\"valid_count\":");
     output.print(static_cast<unsigned>(scan.validCount));
-    output.print(",\"logic\":{\"state\":null,\"target_direction_deg\":null}");
+    output.print(",\"logic\":{\"state\":\"");
+    output.print(scan.logic.state);
+    output.print("\",\"target_sensor_id\":");
+    if (scan.logic.hasTarget) {
+        output.print("\"S");
+        output.print(static_cast<unsigned>(scan.logic.targetSensorIndex));
+        output.print("\"");
+    } else {
+        output.print("null");
+    }
+    output.print(",\"target_direction_deg\":");
+    if (scan.logic.hasTarget) {
+        output.print(scan.logic.targetDirectionDeg, 1);
+    } else {
+        output.print("null");
+    }
+    output.print(",\"target_distance_cm\":");
+    if (scan.logic.hasTarget) {
+        output.print(scan.logic.targetDistanceCm, 1);
+    } else {
+        output.print("null");
+    }
+    output.print('}');
     output.print(",\"sensors\":[");
 
     for (uint8_t i = 0; i < scan.sensorCount; ++i) {

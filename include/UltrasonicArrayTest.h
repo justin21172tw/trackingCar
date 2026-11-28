@@ -1,8 +1,11 @@
 #pragma once
 
 #include <Arduino.h>
+#include "BluetoothTelemetry.h"
 #include "Config.h"
 #include "StandardizedTelemetry.h"
+#include "TargetFollower.h"
+#include "TargetSelector.h"
 #include "UltrasonicArray.h"
 
 namespace UltrasonicArrayTest {
@@ -21,7 +24,7 @@ inline const char* getDirectionName(uint8_t sensorIndex) {
 inline void printStartupStatus(const UltrasonicArray& array) {
     Serial.println();
     Serial.println("============================================================");
-    Serial.println("ULTRASONIC ARRAY TEST: READY");
+    Serial.println("ULTRASONIC TARGET FOLLOWER: READY");
     Serial.printf(
         "Sensors: %u | Poll order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR\n",
         static_cast<unsigned>(array.getSensorCount())
@@ -33,7 +36,7 @@ inline void printStartupStatus(const UltrasonicArray& array) {
         Config::UltrasonicArrayPins::I2C_SCL_PIN
     );
     Serial.printf(
-        "Minimum trigger interval: %u ms | Motor: STOPPED\n",
+        "Minimum trigger interval: %u ms | Motor: TARGET FOLLOWING ENABLED | Wall filtering: PAUSED (fixed objects may be targets)\n",
         static_cast<unsigned>(
             Config::UltrasonicArrayPins::MIN_PING_INTERVAL_MS
         )
@@ -41,7 +44,12 @@ inline void printStartupStatus(const UltrasonicArray& array) {
     Serial.println("============================================================");
 }
 
-inline void runPollingCycle(UltrasonicArray& array) {
+inline void runPollingCycle(
+    UltrasonicArray& array,
+    BluetoothTelemetry& bluetoothTelemetry,
+    TargetSelector& targetSelector,
+    TargetFollower& targetFollower
+) {
     static uint32_t scanNumber = 0;
     ++scanNumber;
     uint8_t validCount = 0;
@@ -59,6 +67,8 @@ inline void runPollingCycle(UltrasonicArray& array) {
     for (uint8_t sensorIndex = 0;
          sensorIndex < array.getSensorCount();
          ++sensorIndex) {
+        targetFollower.maintainPulse();
+
         const uint8_t trigPin =
             Config::UltrasonicArrayPins::TRIG_MCP_PINS[sensorIndex];
         const uint8_t echoPin = array.getEchoPin(sensorIndex);
@@ -73,6 +83,7 @@ inline void runPollingCycle(UltrasonicArray& array) {
 
         const UltrasonicArray::MeasurementResult measurement =
             array.measureDetailed(sensorIndex);
+        targetFollower.maintainPulse();
         if (measurement.isValid()) {
             ++validCount;
             Serial.printf(
@@ -129,25 +140,47 @@ inline void runPollingCycle(UltrasonicArray& array) {
     }
 
     const uint32_t scanDurationMs = millis() - scanStartMs;
+    const TargetSelector::Target target =
+        targetSelector.update(telemetrySensors, array.getSensorCount());
+    const TargetFollower::State followerState = targetFollower.update(target);
+
     Serial.printf(
-        "--- Scan #%lu complete | Valid: %u/%u | No valid reading: %u/%u | Duration: %lu ms | Motor: STOPPED ---\n",
+        "--- Scan #%lu complete | Valid: %u/%u | No valid reading: %u/%u | Duration: %lu ms | Follow state: %s | Wall filtering: PAUSED",
         static_cast<unsigned long>(scanNumber),
         static_cast<unsigned>(validCount),
         static_cast<unsigned>(array.getSensorCount()),
         static_cast<unsigned>(array.getSensorCount() - validCount),
         static_cast<unsigned>(array.getSensorCount()),
-        static_cast<unsigned long>(scanDurationMs)
+        static_cast<unsigned long>(scanDurationMs),
+        TargetFollower::stateName(followerState)
     );
+    if (target.found) {
+        Serial.printf(
+            " | Target: S%u at %.1f cm, %.1f deg",
+            static_cast<unsigned>(target.sensorIndex),
+            target.distanceCm,
+            target.directionDeg
+        );
+    }
+    Serial.println(" ---");
 
     const StandardizedTelemetry::Scan telemetryScan = {
         millis(),
         scanNumber,
         scanDurationMs,
         validCount,
+        {
+            TargetFollower::stateName(followerState),
+            target.found,
+            target.sensorIndex,
+            target.directionDeg,
+            target.distanceCm
+        },
         array.getSensorCount(),
         telemetrySensors
     };
     StandardizedTelemetry::writeLine(Serial, telemetryScan);
+    StandardizedTelemetry::writeLine(bluetoothTelemetry, telemetryScan);
 }
 
 }

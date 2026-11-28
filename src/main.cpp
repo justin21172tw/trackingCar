@@ -1,6 +1,9 @@
 #include <Arduino.h>
+#include "BluetoothTelemetry.h"
 #include "Config.h"
 #include "MotorController.h"
+#include "TargetFollower.h"
+#include "TargetSelector.h"
 #include "UltrasonicArray.h"
 #include "UltrasonicArrayTest.h"
 
@@ -13,6 +16,9 @@ MotorController motor(
     Config::MotorPins::PIN_B1B
 );
 UltrasonicArray ultrasonicArray;
+BluetoothTelemetry bluetoothTelemetry;
+TargetSelector targetSelector;
+TargetFollower targetFollower(motor);
 bool ultrasonicArrayReady = false;
 uint32_t lastInitializationStatusMs = 0;
 
@@ -23,17 +29,27 @@ void setup() {
     delay(500);
     Serial.println();
     Serial.println("============================================================");
-    Serial.println("ESP32 TRACKING CAR | ULTRASONIC ARRAY TEST");
-    Serial.println("Mode: Sensor polling only | Motor action: DISABLED");
+    Serial.println("ESP32 TRACKING CAR | ULTRASONIC TARGET FOLLOWING");
+    Serial.println("Mode: Nearest valid-return tracking | Wall filtering: PAUSED (fixed objects may be targets)");
     Serial.println("============================================================");
 
     motor.init();
     motor.stop();
 
+    if (!bluetoothTelemetry.begin()) {
+        Serial.println("BLE telemetry initialization failed.");
+    } else {
+        Serial.printf(
+            "BLE telemetry ready | Device: %s | Service: %s\n",
+            Config::BluetoothParams::DEVICE_NAME,
+            Config::BluetoothParams::SERVICE_UUID
+        );
+    }
+
     ultrasonicArrayReady = ultrasonicArray.init();
     if (!ultrasonicArrayReady) {
         Serial.println();
-        Serial.println("ULTRASONIC TEST INITIALIZATION FAILED");
+        Serial.println("ULTRASONIC ARRAY INITIALIZATION FAILED");
         Serial.printf(
             "MCP23017 I2C address: 0x%02X | SDA: GPIO %d | SCL: GPIO %d\n",
             static_cast<unsigned>(Config::UltrasonicArrayPins::MCP_I2C_ADDR),
@@ -41,7 +57,7 @@ void setup() {
             Config::UltrasonicArrayPins::I2C_SCL_PIN
         );
         Serial.println("Check MCP23017 power, RESET, I2C wiring and 3.3 V pull-ups.");
-        Serial.println("Motor: STOPPED | Test will keep waiting for initialization.");
+        Serial.println("Motor: STOPPED | Waiting for ultrasonic array initialization.");
         return;
     }
 
@@ -65,5 +81,10 @@ void loop() {
         return;
     }
 
-    UltrasonicArrayTest::runPollingCycle(ultrasonicArray);
+    UltrasonicArrayTest::runPollingCycle(
+        ultrasonicArray,
+        bluetoothTelemetry,
+        targetSelector,
+        targetFollower
+    );
 }
