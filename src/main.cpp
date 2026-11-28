@@ -30,7 +30,7 @@ void setup() {
     Serial.println();
     Serial.println("============================================================");
     Serial.println("ESP32 TRACKING CAR | ULTRASONIC TARGET FOLLOWING");
-    Serial.println("Mode: Moving-target tracking | Static wall filtering: ENABLED");
+    Serial.println("Mode: Nearest valid-return tracking | Wall filtering: PAUSED (fixed objects may be targets)");
     Serial.println("============================================================");
 
     motor.init();

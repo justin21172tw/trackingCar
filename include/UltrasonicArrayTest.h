@@ -36,7 +36,7 @@ inline void printStartupStatus(const UltrasonicArray& array) {
         Config::UltrasonicArrayPins::I2C_SCL_PIN
     );
     Serial.printf(
-        "Minimum trigger interval: %u ms | Motor: TARGET FOLLOWING ENABLED | Static return filtering: ENABLED\n",
+        "Minimum trigger interval: %u ms | Motor: TARGET FOLLOWING ENABLED | Wall filtering: PAUSED (fixed objects may be targets)\n",
         static_cast<unsigned>(
             Config::UltrasonicArrayPins::MIN_PING_INTERVAL_MS
         )
@@ -142,7 +142,7 @@ inline void runPollingCycle(
     const TargetFollower::State followerState = targetFollower.update(target);
 
     Serial.printf(
-        "--- Scan #%lu complete | Valid: %u/%u | No valid reading: %u/%u | Duration: %lu ms | Follow state: %s",
+        "--- Scan #%lu complete | Valid: %u/%u | No valid reading: %u/%u | Duration: %lu ms | Follow state: %s | Wall filtering: PAUSED",
         static_cast<unsigned long>(scanNumber),
         static_cast<unsigned>(validCount),
         static_cast<unsigned>(array.getSensorCount()),

@@ -22,7 +22,7 @@ TargetFollower::State TargetFollower::update(
         return State::NoTarget;
     }
 
-    if (target.distanceCm <= Config::TrackingParams::TARGET_DISTANCE_CM) {
+    if (target.distanceCm <= Config::TrackingParams::STOP_DISTANCE_CM) {
         _motor.stop();
         return State::TargetNearby;
     }

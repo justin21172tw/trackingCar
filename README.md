@@ -9,7 +9,7 @@ include/
   Config.h              全域腳位、感測器方向與運作參數
   MCP23017.h            MCP23017 I2C GPIO 驅動
   MotorController.h     雙輪差速馬達控制
-  TargetSelector.h      從有效量測中選出最近目標及方向
+  TargetSelector.h      從有效量測中選出最近回波及方向
   TargetFollower.h      依目標角度與距離操控差速馬達
   StandardizedTelemetry.h  版本化逐行 JSON 遙測格式與輸出器
   BluetoothTelemetry.h BLE GATT 遙測傳輸與分包
@@ -152,7 +152,7 @@ Motor A 預設為左輪，Motor B 預設為右輪。以下是 ESP32 到雙 H 橋
 
 ## 基礎跟隨模式與 Monitor 訊息
 
-`main.cpp` 每輪依序輪詢感測器 0～7，也就是 F、FL、FR、LE、RI、R、RL、RR；每顆感測器開始量測及取得結果時都會輸出一筆 Monitor 訊息。目標判斷會以每顆感測器的前次距離建立背景變化基準，只接受距離至少變化 5 cm、且相較其他感測器呈現局部變化的有效回波；連續累積兩次移動證據後才認定為移動目標。距離穩定的木板回波會逐步失去目標資格。控制器從合格目標中選最近者，依角度轉向，並在距離不大於 20 cm 時停止。此方法是以超音波時間變化排除靜態背景的啟發式演算法，無法保證排除所有牆面反射或車體自身移動造成的測距變化；初次上電請架高車輪並留意馬達動作。
+`main.cpp` 每輪依序輪詢感測器 0～7，也就是 F、FL、FR、LE、RI、R、RL、RR；每顆感測器開始量測及取得結果時都會輸出一筆 Monitor 訊息。目前為了測試超音波與馬達連動，牆面／移動目標判別暫停：每輪只從狀態為 `Valid` 且距離不超過 150 cm 的感測器中選最近者，並依該感測器方位角控制馬達。固定物（包含牆面或木板）也可能被當成目標；最近目標距離不超過 5 cm 時馬達停止，沒有有效目標時也會停止。初次上電請架高車輪並留意馬達動作。
 
 Monitor 鮑率為 `115200`，訊息以易讀的英文狀態、方向、接線、距離與掃描摘要呈現，例如：
 
@@ -160,13 +160,13 @@ Monitor 鮑率為 `115200`，訊息以易讀的英文狀態、方向、接線、
 ULTRASONIC TARGET FOLLOWER: READY
 Sensors: 8 | Poll order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR
 MCP23017: I2C 0x20 | SDA: GPIO 21 | SCL: GPIO 22
-Minimum trigger interval: 60 ms | Motor: TARGET FOLLOWING ENABLED | Static return filtering: ENABLED
+Minimum trigger interval: 60 ms | Motor: TARGET FOLLOWING ENABLED | Wall filtering: PAUSED (fixed objects may be targets)
 
 --- Scan #1 started at 1234 ms | Order: F -> FL -> FR -> LE -> RI -> R -> RL -> RR ---
 [1/8] F: Measuring...
 [1/8] F | Trig: MCP23017 GPA0 (pin 0) | Echo: ESP32 GPIO 26 | Status: VALID | Distance: 42.3 cm
 [2/8] FL | Trig: MCP23017 GPA1 (pin 1) | Echo: ESP32 GPIO 27 | Status: NO VALID READING | Reason: timeout or out of range
---- Scan #1 complete | Valid: 7/8 | No valid reading: 1/8 | Duration: 480 ms | Follow state: following | Target: S0 at 42.3 cm, 0.0 deg ---
+--- Scan #1 complete | Valid: 7/8 | No valid reading: 1/8 | Duration: 480 ms | Follow state: following | Wall filtering: PAUSED | Target: S0 at 42.3 cm, 0.0 deg ---
 ```
 
 每顆感測器都會列出方向、MCP23017 Trig 腳位、ESP32 Echo GPIO 和量測狀態；有效時顯示距離，無效時說明可能原因。每輪結束會列出有效數量、無效數量和耗時。相鄰 Trig 脈衝至少間隔 60 ms。

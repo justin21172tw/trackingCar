@@ -19,13 +19,4 @@ public:
         const StandardizedTelemetry::Sensor* sensors,
         uint8_t sensorCount
     );
-
-private:
-    struct SensorHistory {
-        float distanceCm;
-        uint8_t motionScore;
-        bool hasPreviousReading;
-    };
-
-    SensorHistory _history[Config::UltrasonicArrayPins::SENSOR_COUNT];
 };
