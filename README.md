@@ -12,10 +12,12 @@ include/
   TargetSelector.h      從有效量測中選出最近目標及方向
   TargetFollower.h      依目標角度與距離操控差速馬達
   StandardizedTelemetry.h  版本化逐行 JSON 遙測格式與輸出器
+  BluetoothTelemetry.h BLE GATT 遙測傳輸與分包
   UltrasonicArray.h     八路超音波輪詢與距離量測
   UltrasonicArrayTest.h 八路超音波順序輪詢及 Monitor 狀態輸出
 src/
   Config.cpp            全域 constexpr 陣列定義
+  BluetoothTelemetry.cpp BLE UART GATT 服務與通知傳送
   MCP23017.cpp          MCP23017 I2C GPIO 實作
   MotorController.cpp   馬達控制實作
   TargetSelector.cpp    最近有效超音波目標選擇
@@ -25,7 +27,7 @@ src/
 web/
   index.html            視覺化除錯介面
   styles.css            白底響應式介面樣式
-  app.js                USB Web Serial、真實遙測與感測器圖表
+  app.js                USB Web Serial、Web Bluetooth、真實遙測與感測器圖表
 ```
 
 ## 方向名稱
@@ -173,7 +175,7 @@ Minimum trigger interval: 60 ms | Motor: TARGET FOLLOWING ENABLED | Static retur
 
 ## 視覺化除錯介面
 
-韌體每完成一輪八顆感測器掃描，會在既有易讀文字訊息後額外輸出一行以 `@TELEMETRY ` 開頭的 JSON。解析器只需讀取此固定前綴的行，其他 `Serial` 訊息可直接忽略；資料結構與輸出器使用 Arduino `Print` 介面，USB 序列埠與未來的其他傳輸層可共用相同格式。此階段不包含 Bluetooth 傳輸。
+韌體每完成一輪八顆感測器掃描，會將同一行以 `@TELEMETRY ` 開頭的 JSON 同時輸出至 USB Serial 和 BLE GATT 通知。兩種傳輸使用相同 schema 和前綴；BLE 使用 Nordic UART Service 相容的唯讀 TX characteristic，預設以 20-byte notification 分包，網頁依換行重新組回完整 JSON。Bluetooth service UUID 為 `6e400001-b5a3-f393-e0a9-e50e24dcca9e`，TX characteristic UUID 為 `6e400003-b5a3-f393-e0a9-e50e24dcca9e`。
 
 以下為協定格式範例，不是即時讀值。網頁不載入範例值，也不產生模擬資料。
 
@@ -194,14 +196,15 @@ Minimum trigger interval: 60 ms | Motor: TARGET FOLLOWING ENABLED | Static retur
    ```
 
 2. 瀏覽 `http://localhost:8000`。未連接車輛時，介面顯示「No vehicle connected」，感測器讀值、圖表及掃描統計維持無資料；不會生成或顯示模擬值。直接開啟 `file://` 頁面不保證能使用 Web Serial；Web Serial 需要支援的瀏覽器及安全來源（localhost 或 HTTPS）。
-3. 接上 ESP32 後按 **Connect USB** 並選擇序列埠。介面以 `115200` 鮑率讀取 USB，只處理 `@TELEMETRY ` 行；連線開啟後，在收到第一筆有效遙測前仍顯示無資料。頁面上的 USB diagnostics 會顯示瀏覽器實際收到的 bytes／lines、帶遙測前綴的行數、接受／拒絕筆數、最近一行原文及 USB VID/PID。Web Serial 不提供作業系統 COM 編號；若 bytes 為 0，請先確認所選 VID/PID 對應到開發板，並關閉 PlatformIO Serial Monitor 等占用同一序列埠的程式。
-4. 收到韌體實際輸出的遙測後，才會更新距離、頻率、狀態與圖表。點選車體上的感測器或下方卡片可查看詳情；每顆圖表只保留最近 3 秒資料，無效讀值會形成曲線斷點，不會被畫成 0 cm。USB 中斷或手動斷線時會清除已顯示的讀值，避免將舊資料誤認為即時資料；連線中超過 2.5 秒未更新則標記為 stale。
+3. 要使用 USB，接上 ESP32 後按 **Connect USB** 並選擇序列埠。介面以 `115200` 鮑率讀取 USB，只處理 `@TELEMETRY ` 行。USB diagnostics 會顯示 bytes／lines、接受／拒絕筆數及最近一行原文。Web Serial 不提供作業系統 COM 編號；若 bytes 為 0，請確認所選裝置並關閉占用同一序列埠的 Serial Monitor。
+4. 要使用無線連線，按 **Connect Bluetooth**，在系統選擇器選擇 `TrackingCar` 並允許連線。電腦需要 Bluetooth LE，瀏覽器需為支援 Web Bluetooth 的 Chrome 或 Edge，且頁面必須從 localhost 或 HTTPS 開啟。Bluetooth diagnostics 會顯示通知數、bytes、完整行及遙測接受／拒絕數。韌體可同時輸出 USB 與 BLE，但除錯網頁一次啟用一種接收來源；切換前請先中斷目前連線。此功能是 BLE GATT，不是傳統 Bluetooth SPP。
+5. 收到韌體實際輸出的遙測後，才會更新距離、頻率、狀態與圖表。點選車體上的感測器或下方卡片可查看詳情；每顆圖表只保留最近 3 秒資料，無效讀值會形成曲線斷點，不會被畫成 0 cm。USB 或 BLE 中斷時會清除已顯示的讀值，避免將舊資料誤認為即時資料；連線中超過 2.5 秒未更新則標記為 stale。
 
 跳動診斷依最近有效樣本的變化幅度判定；「Possible freeze」代表最近至少 2 秒讀值相同，是供除錯參考的啟發式提示，不等於硬體故障判定。感測器位置及車體輪廓是依韌體 F、FL、FR、LE、RI、R、RL、RR 順序固定的前端示意，可在 `web/app.js` 的 `SENSOR_CONFIGS` 調整座標與角度。
 
 ### 擴充方式
 
-網頁接收器只依賴版本化遙測 JSON；Web Serial 只負責讀取 USB 字串行。未來如新增 Bluetooth 或其他傳輸，應將傳輸內容轉成相同遙測記錄後交給共用解析流程，不需改寫圖表與診斷 UI。跟隨狀態、目標感測器、方位角與距離會填入 `logic` 欄位，供除錯網站檢視目標選擇與馬達控制狀態。
+網頁接收器只依賴版本化遙測 JSON；Web Serial 與 Web Bluetooth 只負責取得文字資料並交給共用的行解析及驗證流程，不需分別實作圖表。跟隨狀態、目標感測器、方位角與距離會填入 `logic` 欄位，供除錯網站檢視目標選擇與馬達控制狀態。
 
 ## 編譯與上傳
 

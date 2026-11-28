@@ -5,6 +5,8 @@ const TELEMETRY_VERSION = 1;
 const HISTORY_WINDOW_MS = 3000;
 const MAX_DISTANCE_CM = 250;
 const SERIAL_BAUD_RATE = 115200;
+const BLE_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const BLE_TX_CHARACTERISTIC_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 const SENSOR_CONFIGS = [
   { id: "S0", index: 0, direction: "F", label: "Front", x: 320, y: 58, angle: 0, color: "#315ee8" },
   { id: "S1", index: 1, direction: "FL", label: "Front left", x: 220, y: 112, angle: -42, color: "#8058d8" },
@@ -21,11 +23,18 @@ const elements = {
   connectionLabel: document.querySelector("#connectionLabel"),
   connectSerial: document.querySelector("#connectSerial"),
   disconnectSerial: document.querySelector("#disconnectSerial"),
+  connectBluetooth: document.querySelector("#connectBluetooth"),
+  disconnectBluetooth: document.querySelector("#disconnectBluetooth"),
   serialReadState: document.querySelector("#serialReadState"),
   serialDevice: document.querySelector("#serialDevice"),
   serialReceiveCount: document.querySelector("#serialReceiveCount"),
   serialTelemetryCount: document.querySelector("#serialTelemetryCount"),
   serialLastLine: document.querySelector("#serialLastLine"),
+  bluetoothReadState: document.querySelector("#bluetoothReadState"),
+  bluetoothDevice: document.querySelector("#bluetoothDevice"),
+  bluetoothReceiveCount: document.querySelector("#bluetoothReceiveCount"),
+  bluetoothTelemetryCount: document.querySelector("#bluetoothTelemetryCount"),
+  bluetoothLastLine: document.querySelector("#bluetoothLastLine"),
   scanNumber: document.querySelector("#scanNumber"),
   scanAge: document.querySelector("#scanAge"),
   validCount: document.querySelector("#validCount"),
@@ -64,6 +73,8 @@ let currentScanRateHz = null;
 let lastScanReceivedAt = null;
 let lastDeviceTimestamp = null;
 let serialConnectedAt = null;
+let activeTransport = null;
+let transportConnectedAt = null;
 let staleNoticeShown = false;
 let serialPort = null;
 let serialReader = null;
@@ -74,10 +85,22 @@ let serialBytesSeen = 0;
 let serialLinesSeen = 0;
 let telemetryLinesSeen = 0;
 let acceptedTelemetryRecords = 0;
+let serialRejectedRecords = 0;
 let serialLastByteAt = null;
 let serialLastLinePreview = "";
 let serialDeviceDescription = "—";
 let serialReadError = null;
+let bluetoothDevice = null;
+let bluetoothCharacteristic = null;
+let bluetoothLineBuffer = "";
+let bluetoothDecoder = new TextDecoder();
+let bluetoothBytesSeen = 0;
+let bluetoothNotificationsSeen = 0;
+let bluetoothLinesSeen = 0;
+let bluetoothTelemetryLinesSeen = 0;
+let bluetoothAcceptedRecords = 0;
+let bluetoothRejectedRecords = 0;
+let bluetoothLastLinePreview = "";
 
 function createSvgElement(tagName, attributes = {}) {
   const element = document.createElementNS("http://www.w3.org/2000/svg", tagName);
@@ -313,13 +336,17 @@ function validateTelemetry(record) {
   );
 }
 
-function receiveTelemetry(record) {
+function receiveTelemetry(record, source) {
   if (!validateTelemetry(record)) {
     diagnosticsCount += 1;
     setMessage(`Ignored malformed or unsupported telemetry record (${diagnosticsCount}).`, "warning");
-    return;
+    return false;
   }
-  acceptedTelemetryRecords += 1;
+  if (source === "Bluetooth") {
+    bluetoothAcceptedRecords += 1;
+  } else {
+    acceptedTelemetryRecords += 1;
+  }
 
   if (lastDeviceTimestamp !== null && record.timestamp_ms < lastDeviceTimestamp) {
     clearTelemetry();
@@ -375,12 +402,13 @@ function receiveTelemetry(record) {
     ? ` · ${logic.target_sensor_id} · ${logic.target_direction_deg.toFixed(1)}° · ${logic.target_distance_cm.toFixed(1)} cm`
     : "";
   elements.logicState.textContent = `${logic?.state ?? "not provided"}${targetSummary}`;
-  setConnection("serial", "USB receiving telemetry");
+  setConnection(source === "Bluetooth" ? "bluetooth" : "serial", `${source} receiving telemetry`);
   setMessage(
-    `Scan ${record.scan} received from USB serial.${diagnosticsCount ? ` ${diagnosticsCount} malformed record(s) ignored.` : ""}`,
+    `Scan ${record.scan} received over ${source}.${diagnosticsCount ? ` ${diagnosticsCount} malformed record(s) ignored.` : ""}`,
   );
   staleNoticeShown = false;
   render();
+  return true;
 }
 
 function renderSensorMarkers(now) {
@@ -513,20 +541,55 @@ function render() {
   renderSelectedSensor(now);
 }
 
-function processSerialLine(line) {
+function incrementRejectedRecords(source) {
+  if (source === "Bluetooth") {
+    bluetoothRejectedRecords += 1;
+  } else {
+    serialRejectedRecords += 1;
+  }
+}
+
+function processTelemetryLine(line, source) {
   const trimmed = line.trim();
   if (!trimmed) return;
-  serialLinesSeen += 1;
-  serialLastLinePreview = trimmed.slice(0, 180);
+  if (source === "Bluetooth") {
+    bluetoothLinesSeen += 1;
+    bluetoothLastLinePreview = trimmed.slice(0, 180);
+  } else {
+    serialLinesSeen += 1;
+    serialLastLinePreview = trimmed.slice(0, 180);
+  }
   if (!trimmed.startsWith(TELEMETRY_PREFIX)) return;
-  telemetryLinesSeen += 1;
+  if (source === "Bluetooth") {
+    bluetoothTelemetryLinesSeen += 1;
+  } else {
+    telemetryLinesSeen += 1;
+  }
 
   try {
-    receiveTelemetry(JSON.parse(trimmed.slice(TELEMETRY_PREFIX.length)));
+    if (!receiveTelemetry(JSON.parse(trimmed.slice(TELEMETRY_PREFIX.length)), source)) {
+      incrementRejectedRecords(source);
+    }
   } catch {
     diagnosticsCount += 1;
+    incrementRejectedRecords(source);
     setMessage(`Could not parse telemetry JSON (${diagnosticsCount} malformed record(s)).`, "warning");
   }
+}
+
+function processSerialLine(line) {
+  processTelemetryLine(line, "USB");
+}
+
+function handleBluetoothNotification(event) {
+  const value = event.target.value;
+  bluetoothBytesSeen += value.byteLength;
+  bluetoothNotificationsSeen += 1;
+  bluetoothLineBuffer += bluetoothDecoder.decode(value, { stream: true });
+
+  const lines = bluetoothLineBuffer.split(/\r?\n/);
+  bluetoothLineBuffer = lines.pop() ?? "";
+  for (const line of lines) processTelemetryLine(line, "Bluetooth");
 }
 
 async function readSerialStream(reader) {
@@ -549,6 +612,8 @@ async function readSerialStream(reader) {
     if (serialPort) {
       clearTelemetry();
       serialConnectedAt = null;
+      activeTransport = null;
+      transportConnectedAt = null;
       serialReadError = error.message;
       setConnection("error", "USB read failed");
       setMessage(`Serial read failed; no vehicle data is available: ${error.message}`, "error");
@@ -560,6 +625,10 @@ async function readSerialStream(reader) {
 }
 
 async function connectSerial() {
+  if (bluetoothDevice) {
+    setMessage("Disconnect Bluetooth before connecting over USB.", "warning");
+    return;
+  }
   if (!("serial" in navigator)) {
     setMessage("Web Serial is unavailable in this browser. No vehicle data is available.", "warning");
     return;
@@ -576,6 +645,7 @@ async function connectSerial() {
       throw new Error("The selected serial port has no readable stream.");
     }
     serialPort = port;
+    activeTransport = "USB";
     serialLineBuffer = "";
     serialBytesSeen = 0;
     serialLinesSeen = 0;
@@ -584,6 +654,7 @@ async function connectSerial() {
     serialLastByteAt = null;
     serialLastLinePreview = "";
     serialReadError = null;
+    serialRejectedRecords = 0;
     const deviceInfo = port.getInfo();
     const vendorId = Number.isInteger(deviceInfo.usbVendorId)
       ? `VID 0x${deviceInfo.usbVendorId.toString(16).padStart(4, "0").toUpperCase()}`
@@ -596,6 +667,7 @@ async function connectSerial() {
     serialReader = port.readable.getReader();
     clearTelemetry();
     serialConnectedAt = performance.now();
+    transportConnectedAt = serialConnectedAt;
     serialReadTask = readSerialStream(serialReader);
     elements.connectSerial.hidden = true;
     elements.disconnectSerial.hidden = false;
@@ -611,6 +683,10 @@ async function disconnectSerial() {
   const port = serialPort;
   serialPort = null;
   serialConnectedAt = null;
+  if (activeTransport === "USB") {
+    activeTransport = null;
+    transportConnectedAt = null;
+  }
   let closeError = null;
   if (serialReader) {
     try {
@@ -642,16 +718,132 @@ async function disconnectSerial() {
   );
 }
 
+function handleBluetoothDisconnected(event) {
+  if (event.target !== bluetoothDevice) return;
+  bluetoothDevice = null;
+  bluetoothCharacteristic = null;
+  bluetoothLineBuffer = "";
+  activeTransport = null;
+  transportConnectedAt = null;
+  clearTelemetry();
+  elements.connectBluetooth.hidden = false;
+  elements.disconnectBluetooth.hidden = true;
+  setConnection("disconnected", "Bluetooth disconnected");
+  setMessage("Bluetooth disconnected. No data is available until the vehicle reconnects.");
+}
+
+async function connectBluetooth() {
+  if (serialPort) {
+    setMessage("Disconnect USB before connecting over Bluetooth.", "warning");
+    return;
+  }
+  if (!("bluetooth" in navigator)) {
+    setMessage("Web Bluetooth is unavailable in this browser. Use Chrome or Edge to connect over BLE.", "warning");
+    return;
+  }
+  if (!window.isSecureContext) {
+    setMessage("Web Bluetooth requires a secure page. Open this page from localhost or HTTPS.", "warning");
+    return;
+  }
+
+  elements.connectBluetooth.disabled = true;
+  let device = null;
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [BLE_SERVICE_UUID] }],
+    });
+    bluetoothDevice = device;
+    device.addEventListener("gattserverdisconnected", handleBluetoothDisconnected);
+
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(BLE_SERVICE_UUID);
+    bluetoothCharacteristic = await service.getCharacteristic(BLE_TX_CHARACTERISTIC_UUID);
+    bluetoothCharacteristic.addEventListener(
+      "characteristicvaluechanged",
+      handleBluetoothNotification,
+    );
+    await bluetoothCharacteristic.startNotifications();
+
+    bluetoothLineBuffer = "";
+    bluetoothDecoder = new TextDecoder();
+    bluetoothBytesSeen = 0;
+    bluetoothNotificationsSeen = 0;
+    bluetoothLinesSeen = 0;
+    bluetoothTelemetryLinesSeen = 0;
+    bluetoothAcceptedRecords = 0;
+    bluetoothRejectedRecords = 0;
+    bluetoothLastLinePreview = "";
+    diagnosticsCount = 0;
+    activeTransport = "Bluetooth";
+    transportConnectedAt = performance.now();
+    staleNoticeShown = false;
+    clearTelemetry();
+
+    elements.connectBluetooth.hidden = true;
+    elements.disconnectBluetooth.hidden = false;
+    setConnection("bluetooth", `BLE connected · ${device.name || "TrackingCar"}`);
+    setMessage("Bluetooth connected. Waiting for real vehicle telemetry; no readings received yet.");
+  } catch (error) {
+    if (device) {
+      device.removeEventListener("gattserverdisconnected", handleBluetoothDisconnected);
+      if (device.gatt?.connected) device.gatt.disconnect();
+    }
+    bluetoothDevice = null;
+    bluetoothCharacteristic = null;
+    activeTransport = null;
+    transportConnectedAt = null;
+    elements.connectBluetooth.hidden = false;
+    elements.disconnectBluetooth.hidden = true;
+    setConnection("error", "Bluetooth connection failed");
+    setMessage(`Could not connect to Bluetooth telemetry: ${error.message}`, "error");
+  } finally {
+    elements.connectBluetooth.disabled = false;
+  }
+}
+
+function disconnectBluetooth() {
+  const device = bluetoothDevice;
+  bluetoothDevice = null;
+  bluetoothCharacteristic = null;
+  bluetoothLineBuffer = "";
+  activeTransport = null;
+  transportConnectedAt = null;
+  if (device) {
+    device.removeEventListener("gattserverdisconnected", handleBluetoothDisconnected);
+    if (device.gatt?.connected) device.gatt.disconnect();
+  }
+  clearTelemetry();
+  elements.connectBluetooth.hidden = false;
+  elements.disconnectBluetooth.hidden = true;
+  setConnection("disconnected", "No vehicle connected");
+  setMessage("Vehicle disconnected. No data is available until real telemetry arrives.");
+}
+
 function updateClock() {
   elements.serialDevice.textContent = serialDeviceDescription;
   elements.serialReceiveCount.textContent = `${serialBytesSeen} bytes · ${serialLinesSeen} lines`;
   elements.serialTelemetryCount.textContent =
-    `${telemetryLinesSeen} prefixed · ${acceptedTelemetryRecords} accepted · ${diagnosticsCount} rejected`;
+    `${telemetryLinesSeen} prefixed · ${acceptedTelemetryRecords} accepted · ${serialRejectedRecords} rejected`;
   elements.serialLastLine.textContent = serialLastLinePreview || (
     serialLineBuffer.trim()
       ? `${serialLineBuffer.trim().slice(0, 180)} (waiting for line ending)`
       : "—"
   );
+  elements.bluetoothDevice.textContent = bluetoothDevice?.name || "—";
+  elements.bluetoothReceiveCount.textContent =
+    `${bluetoothBytesSeen} bytes · ${bluetoothNotificationsSeen} notifications`;
+  elements.bluetoothTelemetryCount.textContent =
+    `${bluetoothTelemetryLinesSeen} prefixed · ${bluetoothAcceptedRecords} accepted · ${bluetoothRejectedRecords} rejected`;
+  elements.bluetoothLastLine.textContent = bluetoothLastLinePreview || (
+    bluetoothLineBuffer.trim()
+      ? `${bluetoothLineBuffer.trim().slice(0, 180)} (waiting for line ending)`
+      : "—"
+  );
+  elements.bluetoothReadState.textContent = bluetoothDevice
+    ? bluetoothNotificationsSeen === 0
+      ? "Connected · waiting for notifications"
+      : "Connected · receiving notifications"
+    : "Not connected";
   if (!serialPort) {
     elements.serialReadState.textContent = "Not connected";
   } else if (serialReadError) {
@@ -668,19 +860,27 @@ function updateClock() {
   }
 
   if (lastScanReceivedAt === null) {
-    if (serialPort && serialConnectedAt !== null &&
-        performance.now() - serialConnectedAt > 3000 && !staleNoticeShown) {
+    if (activeTransport && transportConnectedAt !== null &&
+        performance.now() - transportConnectedAt > 3000 && !staleNoticeShown) {
       let label;
       let message;
-      if (telemetryLinesSeen > 0) {
-        label = "USB open · invalid telemetry";
-        message = `Received ${telemetryLinesSeen} @TELEMETRY line(s), but none was valid. Check the firmware output format.`;
-      } else if (serialLinesSeen > 0) {
-        label = "USB open · text only";
-        message = `Received ${serialLinesSeen} serial text line(s), but none starts with @TELEMETRY. Upload the updated telemetry firmware.`;
-      } else if (serialBytesSeen > 0) {
-        label = "USB open · incomplete line";
-        message = `Received ${serialBytesSeen} serial byte(s), but no complete text line. Check the serial format.`;
+      const isBluetooth = activeTransport === "Bluetooth";
+      const lineCount = isBluetooth ? bluetoothLinesSeen : serialLinesSeen;
+      const prefixedCount = isBluetooth ? bluetoothTelemetryLinesSeen : telemetryLinesSeen;
+      const byteCount = isBluetooth ? bluetoothBytesSeen : serialBytesSeen;
+      const transportLabel = isBluetooth ? "Bluetooth" : "USB";
+      if (prefixedCount > 0) {
+        label = `${transportLabel} connected · invalid telemetry`;
+        message = `Received ${prefixedCount} @TELEMETRY line(s), but none was valid. Check the firmware output format.`;
+      } else if (lineCount > 0) {
+        label = `${transportLabel} connected · text only`;
+        message = `Received ${lineCount} ${transportLabel} text line(s), but none starts with @TELEMETRY. Upload the updated telemetry firmware.`;
+      } else if (byteCount > 0) {
+        label = `${transportLabel} connected · incomplete line`;
+        message = `Received ${byteCount} ${transportLabel} byte(s), but no complete text line. Check the telemetry framing.`;
+      } else if (isBluetooth) {
+        label = "Bluetooth connected · no notifications";
+        message = "No BLE notifications received. Confirm the vehicle is scanning and the ESP32 firmware has BLE telemetry enabled.";
       } else {
         label = "USB open · no bytes";
         message = "No serial bytes received. Close Serial Monitor/other COM readers, then check the selected port and ESP32.";
@@ -696,7 +896,7 @@ function updateClock() {
     ? `${ageSeconds.toFixed(1)} s · stale`
     : `${ageSeconds.toFixed(1)} s since last scan`;
   if (ageSeconds > 2.5 && !staleNoticeShown) {
-    setConnection("error", "USB telemetry stale");
+    setConnection("error", `${activeTransport || "Vehicle"} telemetry stale`);
     setMessage("No new vehicle telemetry for 2.5 seconds. Displayed readings are stale.", "warning");
     staleNoticeShown = true;
   }
@@ -707,14 +907,22 @@ buildSensorView();
 render();
 elements.connectSerial.addEventListener("click", connectSerial);
 elements.disconnectSerial.addEventListener("click", disconnectSerial);
+elements.connectBluetooth.addEventListener("click", connectBluetooth);
+elements.disconnectBluetooth.addEventListener("click", disconnectBluetooth);
 window.addEventListener("resize", render);
 
 if (!("serial" in navigator)) {
   elements.connectSerial.disabled = true;
   elements.connectSerial.title = "Web Serial is not supported in this browser.";
-  setMessage("No vehicle connected. Web Serial is unavailable in this browser, so no readings can be displayed.", "warning");
+}
+if (!("bluetooth" in navigator)) {
+  elements.connectBluetooth.disabled = true;
+  elements.connectBluetooth.title = "Web Bluetooth is not supported in this browser.";
+}
+if (!("serial" in navigator) && !("bluetooth" in navigator)) {
+  setMessage("No vehicle connected. This browser supports neither Web Serial nor Web Bluetooth.", "warning");
 } else if (!window.isSecureContext) {
-  setMessage("No vehicle data. Web Serial requires a secure page; open this page from localhost or HTTPS.", "warning");
+  setMessage("No vehicle data. Web Serial and Web Bluetooth require a secure page; open this page from localhost or HTTPS.", "warning");
 }
 
 if ("serial" in navigator) {

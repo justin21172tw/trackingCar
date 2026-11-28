@@ -41,6 +41,12 @@ namespace Config {
         static constexpr float   DEFAULT_TRIM_RIGHT = 1.0f; // 右輪微調修正係數
     };
 
+    struct BluetoothParams {
+        static constexpr char DEVICE_NAME[] = "TrackingCar";
+        static constexpr char SERVICE_UUID[] = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+        static constexpr char TX_CHARACTERISTIC_UUID[] = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+    };
+
     // ==========================================
     // 2. 多路超音波陣列設定 (MCP23017 Trig + ESP32 獨立 Echo)
     // ==========================================

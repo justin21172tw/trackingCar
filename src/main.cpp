@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "BluetoothTelemetry.h"
 #include "Config.h"
 #include "MotorController.h"
 #include "TargetFollower.h"
@@ -15,6 +16,7 @@ MotorController motor(
     Config::MotorPins::PIN_B1B
 );
 UltrasonicArray ultrasonicArray;
+BluetoothTelemetry bluetoothTelemetry;
 TargetSelector targetSelector;
 TargetFollower targetFollower(motor);
 bool ultrasonicArrayReady = false;
@@ -33,6 +35,16 @@ void setup() {
 
     motor.init();
     motor.stop();
+
+    if (!bluetoothTelemetry.begin()) {
+        Serial.println("BLE telemetry initialization failed.");
+    } else {
+        Serial.printf(
+            "BLE telemetry ready | Device: %s | Service: %s\n",
+            Config::BluetoothParams::DEVICE_NAME,
+            Config::BluetoothParams::SERVICE_UUID
+        );
+    }
 
     ultrasonicArrayReady = ultrasonicArray.init();
     if (!ultrasonicArrayReady) {
@@ -71,6 +83,7 @@ void loop() {
 
     UltrasonicArrayTest::runPollingCycle(
         ultrasonicArray,
+        bluetoothTelemetry,
         targetSelector,
         targetFollower
     );

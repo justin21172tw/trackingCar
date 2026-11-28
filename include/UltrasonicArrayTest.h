@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "BluetoothTelemetry.h"
 #include "Config.h"
 #include "StandardizedTelemetry.h"
 #include "TargetFollower.h"
@@ -45,6 +46,7 @@ inline void printStartupStatus(const UltrasonicArray& array) {
 
 inline void runPollingCycle(
     UltrasonicArray& array,
+    BluetoothTelemetry& bluetoothTelemetry,
     TargetSelector& targetSelector,
     TargetFollower& targetFollower
 ) {
@@ -175,6 +177,7 @@ inline void runPollingCycle(
         telemetrySensors
     };
     StandardizedTelemetry::writeLine(Serial, telemetryScan);
+    StandardizedTelemetry::writeLine(bluetoothTelemetry, telemetryScan);
 }
 
 }

@@ -6,14 +6,14 @@
   <meta name="theme-color" content="#f7f9fc">
   <title>Tracking Car Telemetry</title>
   <link rel="stylesheet" href="styles.css">
-  <script src="app.js?v=serial-diagnostics" defer></script>
+  <script src="app.js?v=ble-telemetry" defer></script>
 </head>
 <body>
   <header class="page-header">
     <div>
       <p class="eyebrow">ESP32 / SENSOR DEBUGGER</p>
       <h1>Tracking car telemetry</h1>
-      <p class="intro">Connect the vehicle over USB to view real ultrasonic readings.</p>
+      <p class="intro">Connect the vehicle over USB or Bluetooth Low Energy to view real ultrasonic readings.</p>
     </div>
     <div class="connection-controls">
       <span class="connection-state" id="connectionState" data-state="disconnected">
@@ -22,12 +22,14 @@
       </span>
       <button class="button button-primary" id="connectSerial" type="button">Connect USB</button>
       <button class="button button-primary" id="disconnectSerial" type="button" hidden>Disconnect USB</button>
+      <button class="button button-primary" id="connectBluetooth" type="button">Connect Bluetooth</button>
+      <button class="button button-primary" id="disconnectBluetooth" type="button" hidden>Disconnect Bluetooth</button>
     </div>
   </header>
 
   <main>
     <p class="page-message" id="pageMessage" role="status" aria-live="polite">
-      No vehicle connected. Connect the ESP32 over USB; no readings are shown until real telemetry arrives.
+      No vehicle connected. Connect the ESP32 over USB or Bluetooth; no readings are shown until real telemetry arrives.
     </p>
     <section class="serial-diagnostics" aria-label="USB receive diagnostics">
       <div class="serial-diagnostics-heading">
@@ -45,6 +47,24 @@
       </dl>
       <p class="serial-diagnostics-note">
         Browser serial APIs do not expose the COM port number. The USB vendor/product IDs help identify the selected adapter.
+      </p>
+    </section>
+    <section class="serial-diagnostics" aria-label="Bluetooth receive diagnostics">
+      <div class="serial-diagnostics-heading">
+        <div>
+          <p class="eyebrow">BLUETOOTH DIAGNOSTICS</p>
+          <h2>BLE receive pipeline</h2>
+        </div>
+        <span id="bluetoothReadState">Not connected</span>
+      </div>
+      <dl class="serial-diagnostics-grid">
+        <div><dt>Selected device</dt><dd id="bluetoothDevice">—</dd></div>
+        <div><dt>Receive counters</dt><dd id="bluetoothReceiveCount">0 bytes · 0 notifications</dd></div>
+        <div><dt>Telemetry pipeline</dt><dd id="bluetoothTelemetryCount">0 prefixed · 0 accepted · 0 rejected</dd></div>
+        <div class="serial-last-line"><dt>Last complete BLE line</dt><dd id="bluetoothLastLine">—</dd></div>
+      </dl>
+      <p class="serial-diagnostics-note">
+        Bluetooth uses the BLE UART service. Use Chrome or Edge from localhost or HTTPS, then select TrackingCar.
       </p>
     </section>
     <section class="summary-grid" aria-label="Scan summary">
@@ -154,7 +174,7 @@
 
   <footer class="page-footer">
     <span>Telemetry schema v1</span>
-    <span>USB records are read from lines prefixed with <code>@TELEMETRY</code></span>
+    <span>USB and BLE deliver records prefixed with <code>@TELEMETRY</code></span>
   </footer>
 </body>
 </html>
