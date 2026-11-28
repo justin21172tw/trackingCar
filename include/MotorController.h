@@ -75,6 +75,20 @@ public:
     void turnRight(uint8_t speed, float turnRatio = 0.4f);
 
     /**
+     * @brief 差速左後退 (雙輪後退，Motor A [左輪] 降速使車尾轉向左後方)
+     * @param speed 基礎速度 (0 ~ 255)
+     * @param turnRatio 內側輪 (Motor A) 速度比例 (0.0: 內側輪停止, 1.0: 等速後退)
+     */
+    void backwardLeft(uint8_t speed, float turnRatio = 0.4f);
+
+    /**
+     * @brief 差速右後退 (雙輪後退，Motor B [右輪] 降速使車尾轉向右後方)
+     * @param speed 基礎速度 (0 ~ 255)
+     * @param turnRatio 內側輪 (Motor B) 速度比例 (0.0: 內側輪停止, 1.0: 等速後退)
+     */
+    void backwardRight(uint8_t speed, float turnRatio = 0.4f);
+
+    /**
      * @brief 原地原地左旋 (Motor A 後退，Motor B 前進)
      * @param speed 旋轉速度 (0 ~ 255)
      */

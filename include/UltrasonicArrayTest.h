@@ -67,6 +67,8 @@ inline void runPollingCycle(
     for (uint8_t sensorIndex = 0;
          sensorIndex < array.getSensorCount();
          ++sensorIndex) {
+        targetFollower.maintainPulse();
+
         const uint8_t trigPin =
             Config::UltrasonicArrayPins::TRIG_MCP_PINS[sensorIndex];
         const uint8_t echoPin = array.getEchoPin(sensorIndex);
@@ -81,6 +83,7 @@ inline void runPollingCycle(
 
         const UltrasonicArray::MeasurementResult measurement =
             array.measureDetailed(sensorIndex);
+        targetFollower.maintainPulse();
         if (measurement.isValid()) {
             ++validCount;
             Serial.printf(

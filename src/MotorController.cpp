@@ -119,16 +119,29 @@ void MotorController::backward(uint8_t speed) {
     drive(-speed, -speed);
 }
 
+namespace {
+
+int computeInnerWheelSpeed(uint8_t speed, float turnRatio) {
+    const float clampedRatio = constrain(turnRatio, -1.0f, 1.0f);
+    return static_cast<int>(speed * clampedRatio);
+}
+
+}
+
 void MotorController::turnLeft(uint8_t speed, float turnRatio) {
-    turnRatio = constrain(turnRatio, -1.0f, 1.0f);
-    int innerSpeed = (int)(speed * turnRatio);
-    drive(innerSpeed, speed); // Motor A (左) 降速，Motor B (右) 等速
+    drive(computeInnerWheelSpeed(speed, turnRatio), speed); // Motor A (左) 降速，Motor B (右) 等速
 }
 
 void MotorController::turnRight(uint8_t speed, float turnRatio) {
-    turnRatio = constrain(turnRatio, -1.0f, 1.0f);
-    int innerSpeed = (int)(speed * turnRatio);
-    drive(speed, innerSpeed); // Motor A (左) 等速，Motor B (右) 降速
+    drive(speed, computeInnerWheelSpeed(speed, turnRatio)); // Motor A (左) 等速，Motor B (右) 降速
+}
+
+void MotorController::backwardLeft(uint8_t speed, float turnRatio) {
+    drive(-computeInnerWheelSpeed(speed, turnRatio), -static_cast<int>(speed)); // Motor A (左) 降速倒退，車尾轉向左後
+}
+
+void MotorController::backwardRight(uint8_t speed, float turnRatio) {
+    drive(-static_cast<int>(speed), -computeInnerWheelSpeed(speed, turnRatio)); // Motor B (右) 降速倒退，車尾轉向右後
 }
 
 void MotorController::spinLeft(uint8_t speed) {

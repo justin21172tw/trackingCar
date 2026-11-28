@@ -32,7 +32,7 @@ namespace Config {
     struct MotorParams {
         static constexpr float MOTOR_RATED_VOLTAGE_V = 6.0f;
         static constexpr float MOTOR_SUPPLY_VOLTAGE_V = 9.0f;
-        static constexpr uint8_t DEFAULT_SPEED = 180;   // 預設前進速度 (0 ~ 255)
+        static constexpr uint8_t DEFAULT_SPEED = 200;   // 預設前進速度 (0 ~ 255)
         static constexpr uint8_t MIN_SPEED     = 60;    // 克服摩擦力的最小啟動速度
         static constexpr uint8_t MAX_SPEED = static_cast<uint8_t>(
             255.0f * MOTOR_RATED_VOLTAGE_V / MOTOR_SUPPLY_VOLTAGE_V

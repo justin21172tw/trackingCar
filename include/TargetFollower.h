@@ -16,8 +16,11 @@ public:
     explicit TargetFollower(MotorController& motor);
 
     State update(const TargetSelector::Target& target);
+    void maintainPulse();
     static const char* stateName(State state);
 
 private:
     MotorController& _motor;
+    uint32_t _pulseStartMs;
+    bool _pulseActive;
 };
